@@ -1,0 +1,93 @@
+/* Customer storefront. Scoped under .shop so it doesn't touch the merchant admin styles. */
+.shop {
+  --blue: #1f7aec;
+  --blue-600: #1766cf;
+  --blue-50: #eef5ff;
+  --blue-100: #dbe9fd;
+  --green: #1fae66;
+  --green-50: #e8f8ef;
+  --amber: #f5a524;
+  --red: #e5484d;
+  --ink: #152033;
+  --ink-2: #4b5567;
+  --ink-3: #8a93a3;
+  --line: #e7ebf1;
+  --page: #f4f6fa;
+  --card: #ffffff;
+  --r-lg: 18px;
+  --r: 14px;
+  --r-sm: 10px;
+  --lift: 0 1px 2px rgb(21 32 51 / 5%), 0 4px 14px rgb(21 32 51 / 5%);
+  --lift-lg: 0 16px 48px rgb(21 32 51 / 16%);
+  --wrap: 1240px;
+
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--page);
+  min-height: 100vh;
+}
+.shop a { color: inherit; text-decoration: none; }
+.shop a:hover { text-decoration: none; }
+.shop button { font: inherit; color: inherit; }
+.shop :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.s-wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 20px; }
+@media (max-width: 640px) { .s-wrap { padding: 0 14px; } }
+
+.s-section { margin-top: 32px; }
+.s-section-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.s-section-head h2 { font-size: 21px; font-weight: 700; letter-spacing: -0.015em; margin: 0; }
+.s-section-head .count { color: var(--ink-3); font-size: 14px; }
+.s-section-head .more { margin-left: auto; color: var(--blue); font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 2px; }
+.s-section-head .more:hover { color: var(--blue-600); }
+
+/* Product grid: 2 per row on phones, up to 5 on wide screens. */
+.s-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 16px; }
+@media (max-width: 640px) { .s-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
+
+.s-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 999px;
+  background: var(--card); border: 1px solid var(--line); color: var(--ink-2); font-weight: 500; font-size: 14px;
+  white-space: nowrap; cursor: pointer; transition: background .15s, border-color .15s, color .15s;
+}
+.s-chip:hover { border-color: var(--blue-100); color: var(--ink); }
+.s-chip.active { background: var(--ink); border-color: var(--ink); color: #fff; }
+.s-chip small { color: inherit; opacity: .6; font-weight: 500; }
+
+.s-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; padding: 0 20px;
+  border-radius: 12px; border: 0; background: var(--blue); color: #fff !important; font-weight: 600; cursor: pointer;
+  transition: background .15s;
+}
+.s-btn:hover { background: var(--blue-600); }
+.s-btn.ghost { background: var(--blue-50); color: var(--blue) !important; }
+.s-btn.ghost:hover { background: var(--blue-100); }
+
+.s-select {
+  height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); padding: 0 34px 0 12px;
+  font: inherit; font-size: 14px; color: var(--ink); appearance: none; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%234b5567' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center;
+}
+
+.s-empty { text-align: center; padding: 56px 20px; color: var(--ink-2); }
+.s-empty .big { font-size: 44px; margin-bottom: 8px; }
+.s-empty h3 { font-size: 18px; color: var(--ink); margin: 0 0 6px; }
+
+/* Loading placeholders */
+.s-skel { background: linear-gradient(90deg, #eceff4 25%, #f5f7fa 50%, #eceff4 75%); background-size: 200% 100%; animation: s-shimmer 1.2s infinite; border-radius: var(--r); }
+@keyframes s-shimmer { to { background-position: -200% 0; } }
+
+/* Horizontal scrollers hide their scrollbar; arrows/drag do the work. */
+.s-scroll { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth; }
+.s-scroll::-webkit-scrollbar { display: none; }
+
+.s-input {
+  height: 50px; border: 1.5px solid var(--line); border-radius: 14px; padding: 0 14px; font: inherit; font-size: 16px;
+  background: var(--card); color: var(--ink); transition: border-color .15s, box-shadow .15s; width: 100%;
+}
+textarea.s-input { height: auto; min-height: 84px; padding: 12px 14px; resize: vertical; }
+.s-input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 4px var(--blue-50); }
+.s-input.invalid { border-color: var(--red); }
+.s-btn:disabled { opacity: .55; cursor: not-allowed; }
+.s-check { width: 20px; height: 20px; accent-color: var(--blue); cursor: pointer; flex: none; }

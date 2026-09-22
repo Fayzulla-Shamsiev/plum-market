@@ -1,0 +1,8 @@
+bin/
+obj/
+*.db
+*.db-shm
+*.db-wal
+backend/PlumMarket.Api/wwwroot/
+node_modules/
+backend/PlumMarket.Api/uploads/
