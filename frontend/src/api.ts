@@ -1,4 +1,7 @@
-export type OrderStatus = 'New' | 'InProgress' | 'Overdue' | 'Ready' | 'OnTheWay' | 'Completed' | 'Cancelled'
+import { adminToken, sessionExpired } from './auth'
+
+/** MVP order flow: Новый → В сборке → Готов → Передан в доставку → В пути → Доставлен → Завершён (+ Отменён). */
+export type OrderStatus = 'New' | 'Assembling' | 'Ready' | 'HandedToCourier' | 'OnTheWay' | 'Delivered' | 'Completed' | 'Cancelled'
 export type Platform = 'Telegram' | 'Website' | 'Instagram'
 export type PaymentMethod = 'Cash' | 'CardToCard' | 'Click' | 'Payme'
 export type DeliveryType = 'Pickup' | 'Delivery'
@@ -16,18 +19,32 @@ export interface Lookups {
   employees: { id: number; name: string; role: string }[]
 }
 
+/** How ready a freshly registered store is (dashboard checklist). */
+export interface Setup {
+  slug: string | null
+  categories: number
+  products: number
+  orders: number
+  branchReady: boolean
+}
+
 export interface OrderRow {
   id: number
   createdAt: string
+  statusChangedAt: string
   status: OrderStatus
-  platform: Platform
-  paymentMethod: PaymentMethod
   deliveryType: DeliveryType
   total: number
+  address: string | null
   customer: { id: number; fullName: string; phone: string }
+  recipient: { name: string; phone: string } | null
   branch: string
-  employee: string | null
   itemsCount: number
+  /** The single next step of the flow, or null when finished. */
+  next: OrderStatus | null
+  canCancel: boolean
+  /** New/Assembling longer than the store's time limit. */
+  overdue: boolean
 }
 
 export interface OrdersPage extends Paged<OrderRow> {
@@ -39,8 +56,6 @@ export interface OrderDetail {
   createdAt: string
   statusChangedAt: string
   status: OrderStatus
-  platform: Platform
-  paymentMethod: PaymentMethod
   deliveryType: DeliveryType
   subtotal: number
   deliveryCost: number
@@ -54,19 +69,22 @@ export interface OrderDetail {
   promoCode: string | null
   promoDiscount: number
   cancelReason: string | null
-  customer: { id: number; fullName: string; phone: string; username: string | null; language: string; bonusPoints: number }
+  customer: { id: number; fullName: string; phone: string; email: string | null; language: string; bonusPoints: number }
   branch: { id: number; name: string; address: string }
-  employee: { id: number; name: string } | null
   items: { productName: string; quantity: number; price: number; sum: number }[]
+  history: { status: OrderStatus; at: string; by: string }[]
+  steps: OrderStatus[]
+  next: OrderStatus | null
+  canCancel: boolean
+  overdue: boolean
   notifications: { id: number; channel: string; language: string; text: string; sentAt: string }[]
 }
 
 export interface CustomerRow {
   id: number
   fullName: string
-  username: string | null
+  email: string | null
   phone: string
-  platform: Platform
   bonusPoints: number
   createdAt: string
   lastVisitAt: string
@@ -76,13 +94,19 @@ export interface CustomerRow {
 }
 
 export interface CustomerDetail extends Omit<CustomerRow, 'orders' | 'spent'> {
+  country: string | null
+  birthDate: string | null
+  gender: 'male' | 'female' | null
+  notifyOrders: boolean
+  notifyPromos: boolean
   stats: { orders: number; completed: number; spent: number; averageOrder: number; bonusEarned: number }
-  orders: { id: number; createdAt: string; status: OrderStatus; total: number; platform: Platform; bonusEarned: number }[]
+  orders: { id: number; createdAt: string; status: OrderStatus; deliveryType: DeliveryType; total: number; bonusEarned: number }[]
 }
 
 export interface RevenueStats { revenue: number; cost: number; delivery: number; profit: number }
 export interface OrderCounts { total: number; new: number; completed: number; cancelled: number }
 export interface CustomerStats { total: number; new: number; returning: number; averageOrder: number }
+export interface SalesStats { units: number; orders: number; perOrder: number }
 
 export interface Dashboard {
   period: { from: string; to: string; granularity: 'hour' | 'day' | 'month' }
@@ -91,8 +115,10 @@ export interface Dashboard {
   customers: { current: CustomerStats; previous: CustomerStats; totalAllTime: number }
   revenueChart: { label: string; revenue: number; profit: number }[]
   ordersDynamics: { label: string; new: number; completed: number; cancelled: number }[]
-  byPlatform: { platform: Platform; orders: number; revenue: number }[]
-  trafficSources: { source: string; users: number }[]
+  sales: { current: SalesStats; previous: SalesStats }
+  /** All time: cash received for completed orders and still to collect for active ones. */
+  balance: { received: number; pending: number; activeOrders: number; overdue: number }
+  pipeline: { status: OrderStatus; count: number }[]
   topProducts: { name: string; quantity: number; revenue: number }[]
   topCustomers: { id: number; name: string; phone: string; orders: number; total: number }[]
   map: {
@@ -102,6 +128,21 @@ export interface Dashboard {
 }
 
 export interface AutoReply { status: OrderStatus; language: string; enabled: boolean; text: string }
+export interface StoreSettings {
+  storeName: string
+  phone: string | null
+  workingHours: string | null
+  aboutText: string | null
+  deliveryFee: number
+  freeDeliveryFrom: number | null
+  deliveryTerms: string | null
+  returnTerms: string | null
+  overdueMinutes: number
+}
+
+export interface BranchRow { id: number; name: string; address: string; phone: string | null; workingHours: string | null; lat: number; lng: number; orders: number }
+export interface BranchInput { name: string; address: string; phone: string | null; workingHours: string | null; lat: number; lng: number; copyStockFrom?: number | null }
+
 export interface BonusSettings { enabled: boolean; spendPerPoint: number }
 
 type Query = Record<string, string | number | boolean | null | undefined>
@@ -116,10 +157,10 @@ export function qs(params: Query): string {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
-  })
+  const res = await fetch(url, { ...init, headers: authHeaders(init) })
+  // The store of the signed-in administrator is what every admin endpoint works on; without a valid session
+  // there is no store, so the panel has to ask for the password again.
+  if (res.status === 401) sessionExpired()
   if (!res.ok) {
     const text = await res.text()
     let message = text
@@ -131,17 +172,22 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+/** Bearer token of the admin session + JSON content type for bodies. */
+export function authHeaders(init?: RequestInit): Record<string, string> {
+  const headers: Record<string, string> = init?.body ? { 'Content-Type': 'application/json' } : {}
+  if (adminToken.value) headers.Authorization = `Bearer ${adminToken.value}`
+  return headers
+}
+
 export const api = {
   lookups: () => request<Lookups>('/api/lookups'),
+  setup: () => request<Setup>('/api/dashboard/setup'),
   dashboard: (q: Query) => request<Dashboard>(`/api/dashboard${qs(q)}`),
 
   orders: (q: Query) => request<OrdersPage>(`/api/orders${qs(q)}`),
   order: (id: number) => request<OrderDetail>(`/api/orders/${id}`),
-  setStatus: (id: number, status: OrderStatus) =>
-    request<OrderDetail>(`/api/orders/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
-  setEmployee: (id: number, employeeId: number | null) =>
-    request<OrderDetail>(`/api/orders/${id}/employee`, { method: 'PATCH', body: JSON.stringify({ employeeId }) }),
-  simulateOrder: () => request<OrderDetail>('/api/orders/simulate', { method: 'POST' }),
+  setStatus: (id: number, status: OrderStatus, reason?: string) =>
+    request<OrderDetail>(`/api/orders/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, reason }) }),
   exportUrl: (q: Query) => `/api/orders/export${qs(q)}`,
   assemblyUrl: (q: Query) => `/api/orders/assembly-sheet${qs(q)}`,
 
@@ -151,19 +197,50 @@ export const api = {
 
   customers: (q: Query) => request<Paged<CustomerRow>>(`/api/customers${qs(q)}`),
   customer: (id: number) => request<CustomerDetail>(`/api/customers/${id}`),
+  storeSettings: () => request<StoreSettings>('/api/store/settings'),
+  saveStoreSettings: (s: StoreSettings) => request<StoreSettings>('/api/store/settings', { method: 'PUT', body: JSON.stringify(s) }),
+  branches: () => request<BranchRow[]>('/api/store/branches'),
+  createBranch: (b: BranchInput) => request<BranchRow>('/api/store/branches', { method: 'POST', body: JSON.stringify(b) }),
+  updateBranch: (id: number, b: BranchInput) => request<BranchRow>(`/api/store/branches/${id}`, { method: 'PUT', body: JSON.stringify(b) }),
+  deleteBranch: (id: number) => fetch(`/api/store/branches/${id}`, { method: 'DELETE', headers: authHeaders() }).then(async r => {
+    if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`)
+  }),
   bonus: () => request<BonusSettings>('/api/settings/bonus'),
   saveBonus: (b: BonusSettings) =>
     request<BonusSettings>('/api/settings/bonus', { method: 'PUT', body: JSON.stringify(b) }),
 }
 
+/**
+ * File endpoints need the admin session like any other request, so the file is fetched with the token and
+ * handed to the browser as a blob rather than opened by URL.
+ */
+async function file(url: string): Promise<{ href: string; name: string }> {
+  const res = await fetch(url, { headers: authHeaders() })
+  if (res.status === 401) sessionExpired()
+  if (!res.ok) throw new Error(`Не удалось получить файл (${res.status})`)
+  const disposition = res.headers.get('Content-Disposition') ?? ''
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(disposition)
+  return { href: URL.createObjectURL(await res.blob()), name: decodeURIComponent(match?.[1] ?? url.split('/').pop() ?? 'file') }
+}
+
 /** Triggers a browser download for a GET endpoint that returns a file. */
-export function download(url: string) {
+export async function download(url: string) {
+  const { href, name } = await file(url)
   const a = document.createElement('a')
-  a.href = url
+  a.href = href
+  a.download = name
   a.rel = 'noopener'
   document.body.appendChild(a)
   a.click()
   a.remove()
+  setTimeout(() => URL.revokeObjectURL(href), 60_000)
+}
+
+/** Same, but shows the file (a PDF to print) in a new tab. */
+export async function openFile(url: string) {
+  const { href } = await file(url)
+  window.open(href, '_blank', 'noopener')
+  setTimeout(() => URL.revokeObjectURL(href), 60_000)
 }
 
 // ------------------------------------------------------------------ Catalog
@@ -365,7 +442,7 @@ async function send<T>(url: string, method: string, body?: unknown): Promise<T> 
 async function upload<T>(url: string, file: File): Promise<T> {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(url, { method: 'POST', body: form })
+  const res = await fetch(url, { method: 'POST', body: form, headers: authHeaders() })
   if (!res.ok) {
     const text = await res.text()
     let message = text
@@ -379,7 +456,7 @@ export const catalogApi = {
   categories: (branchId?: number | '') => request<CategoryRow[]>(`/api/categories${qs({ branchId })}`),
   category: (id: number) => request<Category & { id: number }>(`/api/categories/${id}`),
   saveCategory: (c: Category) => (c.id ? send<Category>(`/api/categories/${c.id}`, 'PUT', c) : send<Category>('/api/categories', 'POST', c)),
-  deleteCategory: (id: number) => fetch(`/api/categories/${id}`, { method: 'DELETE' }).then(async r => {
+  deleteCategory: (id: number) => fetch(`/api/categories/${id}`, { method: 'DELETE', headers: authHeaders() }).then(async r => {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`)
   }),
 
@@ -387,7 +464,7 @@ export const catalogApi = {
   product: (id: number) => request<Product & { id: number }>(`/api/products/${id}`),
   saveProduct: (p: Product) => (p.id ? send<Product>(`/api/products/${p.id}`, 'PUT', p) : send<Product>('/api/products', 'POST', p)),
   setProductActive: (id: number, isActive: boolean) => send(`/api/products/${id}/active`, 'PATCH', { isActive }),
-  deleteProduct: (id: number) => fetch(`/api/products/${id}`, { method: 'DELETE' }),
+  deleteProduct: (id: number) => fetch(`/api/products/${id}`, { method: 'DELETE', headers: authHeaders() }),
   importTemplateUrl: '/api/products/import/template',
   importProducts: (file: File) => upload<ImportResult>('/api/products/import', file),
   importSettings: () => request<ImportSettings>('/api/products/import/settings'),
@@ -395,7 +472,7 @@ export const catalogApi = {
 
   discounts: (branchId?: number | '') => request<DiscountRow[]>(`/api/discounts${qs({ branchId })}`),
   saveDiscount: (id: number | null, d: DiscountInput) => (id ? send(`/api/discounts/${id}`, 'PUT', d) : send('/api/discounts', 'POST', d)),
-  deleteDiscount: (id: number) => fetch(`/api/discounts/${id}`, { method: 'DELETE' }),
+  deleteDiscount: (id: number) => fetch(`/api/discounts/${id}`, { method: 'DELETE', headers: authHeaders() }),
 
   ikpu: (q: Query) => request<{ items: IkpuRow[]; missing: number; reference: IkpuRef[] }>(`/api/ikpu${qs(q)}`),
   saveIkpu: (id: number, v: { ikpu: string | null; packageCode: string | null; unitCode: string | null }) =>
@@ -421,7 +498,6 @@ export const chatApi = {
   send: (id: number, body: { text: string; attachmentUrl?: string; attachmentName?: string; attachmentType?: string; senderName?: string }) =>
     send<ConversationDetail>(`/api/chat/conversations/${id}/messages`, 'POST', body),
   forCustomer: (customerId: number) => send<{ id: number }>(`/api/chat/for-customer/${customerId}`, 'POST'),
-  simulate: () => send<{ id: number; displayName: string }>('/api/chat/simulate', 'POST'),
   unread: () => request<{ count: number }>('/api/chat/unread'),
   settings: () => request<ChatSettings>('/api/chat/settings'),
   saveSettings: (s: ChatSettings) => send<ChatSettings>('/api/chat/settings', 'PUT', s),
@@ -574,26 +650,26 @@ export const marketingApi = {
     send<{ total: number; reachable: number; sample: { id: number; fullName: string; platform: Platform }[] }>('/api/marketing/broadcasts/audience', 'POST', f),
   createBroadcast: (b: { name: string; text: string; imageUrl: string | null; buttonText: string | null; buttonUrl: string | null; sendAt: string | null; audience: AudienceFilter }) =>
     send<{ id: number }>('/api/marketing/broadcasts', 'POST', b),
-  deleteBroadcast: (id: number) => fetch(`/api/marketing/broadcasts/${id}`, { method: 'DELETE' }),
+  deleteBroadcast: (id: number) => fetch(`/api/marketing/broadcasts/${id}`, { method: 'DELETE', headers: authHeaders() }),
 
   promos: () => request<PromoRow[]>('/api/marketing/promocodes'),
   savePromo: (id: number | null, p: PromoInput) =>
     id ? send(`/api/marketing/promocodes/${id}`, 'PUT', p) : send('/api/marketing/promocodes', 'POST', p),
-  deletePromo: (id: number) => fetch(`/api/marketing/promocodes/${id}`, { method: 'DELETE' }),
+  deletePromo: (id: number) => fetch(`/api/marketing/promocodes/${id}`, { method: 'DELETE', headers: authHeaders() }),
   generatePromo: () => request<{ code: string }>('/api/marketing/promocodes/generate'),
   checkPromo: (q: Query) => request<{ valid: boolean; error: string | null; discount: number }>(`/api/marketing/promocodes/check${qs(q)}`),
 
   sources: () => request<SourceRow[]>('/api/marketing/sources'),
   createSource: (s: { type: 'Telegram' | 'Website'; name: string }) => send<{ id: number }>('/api/marketing/sources', 'POST', s),
   renameSource: (id: number, s: { type: 'Telegram' | 'Website'; name: string }) => send(`/api/marketing/sources/${id}`, 'PUT', s),
-  deleteSource: (id: number) => fetch(`/api/marketing/sources/${id}`, { method: 'DELETE' }),
+  deleteSource: (id: number) => fetch(`/api/marketing/sources/${id}`, { method: 'DELETE', headers: authHeaders() }),
 
   smsCampaigns: (status?: SmsStatus | '') =>
     request<{ items: SmsCampaignRow[]; counts: Partial<Record<SmsStatus, number>> }>(`/api/marketing/sms/campaigns${qs({ status })}`),
   smsTemplates: () => request<SmsTemplateRow[]>('/api/marketing/sms/templates'),
   createSmsTemplate: (t: { name: string; text: string }) =>
     send<{ id: number; status: SmsStatus; rejectReason: string | null }>('/api/marketing/sms/templates', 'POST', t),
-  deleteSmsTemplate: (id: number) => fetch(`/api/marketing/sms/templates/${id}`, { method: 'DELETE' }).then(async r => {
+  deleteSmsTemplate: (id: number) => fetch(`/api/marketing/sms/templates/${id}`, { method: 'DELETE', headers: authHeaders() }).then(async r => {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`)
   }),
   smsSegments: (text: string) =>
@@ -602,7 +678,7 @@ export const marketingApi = {
 
   channel: () => request<ChannelState>('/api/marketing/channel'),
   connectChannel: (channel: string) => send<{ channel: string; connectedAt: string }>('/api/marketing/channel/connect', 'POST', { channel }),
-  disconnectChannel: () => fetch('/api/marketing/channel/connect', { method: 'DELETE' }),
+  disconnectChannel: () => fetch('/api/marketing/channel/connect', { method: 'DELETE', headers: authHeaders() }),
   publishPost: (p: { text: string; imageUrl: string | null; buttonText: string | null; buttonUrl: string | null }) =>
     send<ChannelPost>('/api/marketing/channel/posts', 'POST', p),
 
@@ -611,9 +687,9 @@ export const marketingApi = {
   saveBanner: (b: Banner) => (b.id ? send(`/api/marketing/banners/${b.id}`, 'PUT', b) : send('/api/marketing/banners', 'POST', b)),
   setBannerActive: (id: number, isActive: boolean) => send(`/api/marketing/banners/${id}/active`, 'PATCH', { isActive }),
   moveBanner: (id: number, direction: number) => fetch(`/api/marketing/banners/${id}/move`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ direction }),
+    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ direction }),
   }),
-  deleteBanner: (id: number) => fetch(`/api/marketing/banners/${id}`, { method: 'DELETE' }),
+  deleteBanner: (id: number) => fetch(`/api/marketing/banners/${id}`, { method: 'DELETE', headers: authHeaders() }),
 
   reviews: (q: Query) =>
     request<Paged<ReviewRow> & { counts: Partial<Record<'New' | 'Answered', number>>; average: number }>(`/api/marketing/reviews${qs(q)}`),

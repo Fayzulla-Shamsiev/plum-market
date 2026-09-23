@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { marketingApi, type Platform, type PromoRow } from '../../api'
+import { marketingApi, type PromoRow } from '../../api'
 import Icon from '../../components/Icon.vue'
-import { count, date, money, platformLabel } from '../../format'
+import { count, date, money } from '../../format'
 import PromoModal from './PromoModal.vue'
 
 const rows = ref<PromoRow[] | null>(null)
@@ -25,10 +25,10 @@ async function copy(code: string) {
 }
 
 // "Проверить промокод" — the same rules checkout applies.
-const check = ref({ code: '', amount: 100000, platform: '' as Platform | '' })
+const check = ref({ code: '', amount: 100000 })
 const checkResult = ref<{ valid: boolean; error: string | null; discount: number } | null>(null)
 async function runCheck() {
-  checkResult.value = await marketingApi.checkPromo({ code: check.value.code, amount: check.value.amount, platform: check.value.platform })
+  checkResult.value = await marketingApi.checkPromo({ code: check.value.code, amount: check.value.amount, platform: 'Website' })
 }
 </script>
 
@@ -60,9 +60,8 @@ async function runCheck() {
               <td class="num nowrap small">{{ date(p.startsAt) }} — {{ date(p.endsAt) }}</td>
               <td class="small">
                 <span v-if="p.firstOrderOnly" class="pill">первый заказ</span>
-                <span v-for="pl in p.platforms" :key="pl" class="pill">{{ platformLabel[pl] }}</span>
                 <span v-if="p.categoryIds.length" class="pill">категорий: {{ p.categoryIds.length }}</span>
-                <span v-if="!p.firstOrderOnly && !p.platforms.length && !p.categoryIds.length" class="faint">нет</span>
+                <span v-if="!p.firstOrderOnly && !p.categoryIds.length" class="faint">нет</span>
               </td>
               <td><span class="badge" :class="stateClass[p.state]">{{ stateLabel[p.state] }}</span></td>
               <td class="right nowrap">
@@ -84,10 +83,6 @@ async function runCheck() {
         <input v-model="check.code" class="input" placeholder="Код" aria-label="Код" @keydown.enter="runCheck" />
         <input v-model.number="check.amount" type="number" min="0" class="input w140" aria-label="Сумма заказа" />
         <span class="faint">сум</span>
-        <select v-model="check.platform" class="select" aria-label="Платформа">
-          <option value="">Любая платформа</option>
-          <option v-for="(l, k) in platformLabel" :key="k" :value="k">{{ l }}</option>
-        </select>
         <button class="btn" :disabled="!check.code.trim()" @click="runCheck">Проверить</button>
       </div>
       <p v-if="checkResult" class="result" :class="checkResult.valid ? 'ok' : 'bad'">

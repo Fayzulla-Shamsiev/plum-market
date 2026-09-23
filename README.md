@@ -1,21 +1,28 @@
 # Plum Market — storefront + кабинет мерчанта (prototype)
 
+**Регистрация и вход администратора** from the third spec (`ТЗ на разработку Plum Market с нуля (2).pdf`):
+an entrepreneur registers with имя + номер телефона + пароль, which creates the administrator **and their store**,
+and lands them in the admin panel. Every administrator sees only their own store, products, categories, customers
+and orders. There is no demo data: a new store starts empty with a ready template (settings, one branch, order
+auto-replies) and the administrator fills the catalog from there.
+
 **Storefront (витрина покупателя)** from the MVP spec (`ТЗ на разработку Plum Market с нуля (1).pdf`). The
 «Пользовательский workflow», «корзина и оформление заказа», «Избранное» and «Профиль» sections are done. It's served at `/`, and the merchant
 admin lives on its existing paths (`/dashboard`, `/orders`, …). Both read the same database, so any price, discount,
 category or on/off change made in the admin shows on the storefront on the next page load.
 
-Merchant admin from the spec (`ТЗ на разработку Plum Market с нуля.pdf`).
-Done: **Дашборд, Заказы, Клиенты** (iteration 1), **Чат, Продукты** (iteration 2), **Маркетинг** (iteration 3).
-The other 8 sections are in the sidebar as "скоро" placeholders.
+**Merchant admin** follows the MVP spec's «Административная часть»: products and categories, customers and orders,
+the order status flow, delivery control and completion, and a dashboard. It has no platforms, payment types,
+staff, tariffs, Telegram bot, SMS, broadcasts or traffic sources: the storefront is the only sales channel, and
+payment is cash on receipt.
 
 Stack: **ASP.NET Core 10** (controllers, EF Core + SQLite, ClosedXML, QuestPDF, Anthropic C# SDK) + **Vue 3** (Vite,
 TypeScript, vue-router, Chart.js, Leaflet). UI language: Russian.
 
 ## Run
 
-Requirements: .NET SDK 10 and Node 20+. No database server needed, since SQLite creates `plum.db` and seeds
-~13 months of demo data on first start.
+Requirements: .NET SDK 10 and Node 20+. No database server needed: SQLite creates an empty `plum.db` on first
+start. Open http://localhost:5090/register, create a store, and the panel is yours.
 
 ```bash
 # API on http://localhost:5090 (also serves the built frontend from wwwroot)
@@ -45,11 +52,20 @@ Without a key they still work in **offline mode**. Uzbek Latin ⇄ Cyrillic is a
 to a template. Requests opt into server-side refusal fallbacks (`fallbacks: default`), so a declined request is
 retried on Anthropic's recommended fallback model instead of failing.
 
+### Accounts, stores and where the storefront lives
+
+- `/register`, `/login` — администратор. The session is a bearer token in `localStorage`; every `/api/...` call
+  carries it, and the server resolves the store from it (`StoreMiddleware`).
+- `/shops` — the storefronts on this installation, because one installation hosts many stores. Opening
+  `/shop/{slug}` selects a shop (its slug is sent as the `X-Store` header on every `/api/shop/...` call) and the
+  storefront keeps its usual paths (`/`, `/cart`, `/profile`, …). A single-store installation skips the choice.
+  In production each store would answer on its own address instead.
+- Switching shops clears the cart, favourites and customer session: another shop is another account.
+
 ### Database resets on model changes
 
 There are no migrations. `AppDbContext.SchemaVersion` is stored in SQLite's `user_version`. When the code's
-version differs from the DB's, the DB is **dropped and re-seeded on start**. Upgrading from iteration 1 therefore
-resets demo data.
+version differs from the DB's, the DB is **dropped and created empty on start** — every store and account with it.
 
 ## What's implemented — storefront
 
@@ -130,8 +146,8 @@ localized field. Blue/green palette; phone layout with a bottom tab bar.
   - **Чат с поддержкой**: a signed-in customer has one thread across devices. Their orders are shown above the input;
     tapping one attaches it, the message carries a link to the order, and the admin sees "📦 Заказ №N".
 - **Мои заказы** (`/profile/orders`): Активные / Все tabs; each card shows ID, status, date and time, recipient,
-  number of items and total, with "Отменить заказ". **Order page**: progress (Новый → В сборке → Готов к отправке →
-  В пути → Доставлен; pickup: … → Готов к выдаче → Выдан), receiving, recipient, payment, items and totals. Pages
+  number of items and total, with "Отменить заказ". **Order page**: progress with times (Новый → В сборке → Готов к отправке →
+  Передан в доставку → В пути → Доставлен → Завершён; pickup: … → Готов к выдаче → Завершён), receiving, recipient, payment, items and totals. Pages
   refresh every 15–20 s, so admin status changes show up. Per the spec, **Отменить заказ** is shown only while the
   store hasn't confirmed the order (Новый). Once the admin moves it to В сборке the button disappears and the page
   points to support. On cancel, stock and the promo use are returned and the reason shows in the admin.
@@ -150,123 +166,71 @@ Also `/api/shop/info`, `/api/shop/account/{settings,reviews}` (`ShopProfileContr
 Favourites and the cart are still kept in the browser, not the account. Order statuses use the admin's current set; the spec's «Передан в доставку»
 step comes when the admin workflow is connected.
 
-## What's implemented — admin
+## What's implemented — admin (MVP)
 
-### Дашборд
-- Period: сегодня / неделя / месяц / квартал / год / custom range. Branch filter.
-- KPI cards: **Доход** (revenue, cost of goods, delivery, profit), **Заказы** (new/in-work, completed,
-  cancelled), **Клиенты** (total, new, returning, average check). Each card shows a % change vs the previous
-  period of the same length.
-- Revenue & profit chart and order dynamics by status. Buckets are hourly for 1 day, daily up to 3 months, and
-  monthly beyond that.
-- Orders by channel (Telegram / website / Instagram), traffic sources, top-10 products, top-10 clients.
-- Orders map (Leaflet + OSM) with branch pins and toggles.
+Sidebar: Дашборд, Заказы (green badge = new storefront orders), Клиенты, Чат, Каталог (Категории, Товары,
+Скидки, Склад), Маркетинг (Промокоды, Баннеры, Отзывы), Магазин.
+
+### Order flow (`Domain/OrderFlow.cs`)
+Новый → В сборке → Готов к отправке → Передан в доставку → В пути → Доставлен → Завершён; pickup orders go
+Новый → В сборке → Готов к выдаче → Завершён. The store moves an order **one step at a time**. The API refuses
+skips and names the correct next step. The store can cancel up to "В пути"; the customer only while it's "Новый".
+Cancelling returns limited stock and the promo use. Every change is kept in `OrderStatusChange` (time, and
+Покупатель or Магазин), so both the admin order card and the customer's order page show a timeline with times.
+"Просрочен" is a flag, not a status: an order still Новый or В сборке after the store's limit (Магазин → Заказы).
+Each status sends the customer a message (editable in "Сообщения покупателю") into their chat with the store, unless
+they turned order updates off in Настройки. Bonus points are credited on Завершён.
 
 ### Заказы
-- Status tabs with live counters: Все, Новый, В процессе, Просрочен, Готов, В пути, История заказов.
-- Search by order ID, client name or phone. Filters: branch, employee, payment, delivery type, platform, status,
-  date range.
-- Order drawer with items and totals, client, address and comment. You can assign an employee and change the
-  status from there, or use the one-click "next status" button in the list.
-- **Overdue detection:** New/In-progress orders older than 90 minutes become "Просрочен" automatically.
-- **Экспорт:** Excel file for a date range or all time, filtered by the statuses you pick.
-- **Лист сборки:** PDF or Excel for a period and set of statuses, grouped by order (with checkboxes) or by
-  product (totals to pick).
-- **Автоответчик:** one editable text per status × language (ru/uz/en), with placeholders `{name}`,
-  `{order_id}`, `{total}`, `{branch}` and `{bonus}`. It fires on every status change in the client's language.
-  Sent messages are logged and shown in the order drawer. The real Telegram delivery is stubbed.
-- "Тестовый заказ" creates a random incoming order so you can demo the flow.
+- **Доска** (default): one column per active step, with the "Delivered → Подтвердить завершение" check at the end.
+  Each card shows the order, recipient, address or pickup branch, total and age, a "просрочен" flag, and one button
+  for the next step (Принять в сборку, Готов, Передать курьеру, Курьер выехал, Доставлен, Подтвердить завершение or
+  Выдан покупателю).
+- **Список**: tabs Все / Новые / В сборке / Готовы / В доставке / Доставлены / Просроченные / Завершённые и
+  отменённые; search; branch, delivery-type and date filters; the same next-step button.
+- **Order card**: timeline, next step, cancel with a reason (the customer sees it), recipient, address, comment,
+  items, promo code, totals, bonus, and the messages sent to the customer.
+- The queue refreshes every 15 s and announces new storefront orders. Also: Лист сборки (PDF/Excel), Экспорт
+  (Excel).
+
+### Дашборд
+Выручка (with cost, delivery, profit), Заказы, Клиенты (new, returning, average check), Продажи (units sold, per
+order), Баланс (cash received for completed orders, plus cash still expected from orders in progress). Each has a
+delta vs the previous period, except Баланс, which is all time. Also: revenue chart, "Заказы сейчас" (live count per
+step, plus overdue), order dynamics, top-10 products, orders map, top-10 customers. Period and branch filters.
 
 ### Клиенты
-- Table: name, username, phone, orders, bonus points, date added, last visit, platform, action. Search
-  (Cyrillic, case-insensitive), platform filter and sorting.
-- **Настройки баллов:** turn the bonus system on or off and set how many сум earn 1 point (1 балл = 1 сум).
-  Points are credited when an order is completed and taken back if it gets reopened or cancelled.
-- The Telegram platform icon links to the store's bot (`t.me/<bot>`). The "Чат" button opens that client's chat
-  thread.
-- Client profile drawer with stats and recent orders. Dashboard top-10 rows link here.
+Name, phone, e-mail, orders, bonus points, sign-up and last visit; search by name, phone or e-mail; bonus settings.
+The profile drawer shows what the customer filled in on the storefront (country, birth date, gender, notification
+choices) and their orders.
 
 ### Чат
-- Unified inbox for Telegram, Instagram, website and Wolt. Categories: Все, Не прочитано, Instagram, Обзоры.
-  There is also a platform dropdown next to "Все чаты", search, and an unread badge in the sidebar.
-- Each thread shows client details and the platform icon, with messages grouped by day. You can attach files
-  (images and video preview inline) and insert emoji. Enter sends, Shift+Enter makes a new line.
-- **Обзоры**: product reviews open as threads. Replying there publishes the answer on the review and marks it
-  "Отвечено".
-- **Настройки чата**: toggles for chat in group, chat with bot and auto-reply, plus an auto-reply text per
-  platform. The auto-reply fires on a client's message, at most once per 6 hours per thread.
-- The Clients page "Чат" button opens that client's thread, creating it if needed.
-- "Входящее сообщение (тест)" simulates a message arriving from a channel webhook. The inbox polls every
-  6 seconds; the real system would push updates instead.
+Storefront conversations only: support chat, "Написать продавцу" (with the product), questions about an order, and
+reviews ("Отзывы"). Categories are Все / Не прочитано / Отзывы. There's an auto-reply for new messages, and status
+messages show in the customer's thread.
 
-### Продукты
-Clicking "Продукты" in the sidebar only expands the submenu, as the spec describes. Every sub-page has a
-**branch selector** ("в разрезе выбранного филиала").
-- **Категории**: tree list with sub-category and product counts, creation date, edit and delete (blocked while
-  the category still has children or products). The form has names and descriptions in ru / uz (Latin) /
-  uz (Cyrillic) with Перевести and Сгенерировать. You choose "new category" or "sub-category of…", and set an
-  image, product layout (2 or 3 per row, or list), product order, and an optional banner.
-- **Продукты**: list with photo, price and old price, rating, review count, created date, active toggle, edit and
-  delete. It has search in any language, a category filter (includes sub-categories) and a status filter.
-- **Product form**: multilingual name and description with AI, photos and videos (the first image is the cover),
-  category, price, unit, old price, cost, live profit and margin, variants, extra attributes, size and weight,
-  tags, and branch availability.
-- **Импорт**: download the Excel template, then upload it. Rows are matched by Russian name (update, else
-  create), missing categories are created, and Cyrillic is filled in from Latin. You get a per-row error report.
-  A separate "Внешний источник" tab stores sync parameters (Billz, МойСклад, 1С…). The key is never sent back to
-  the browser.
-- **Скидка**: name, percent or fixed amount, products, start and end, optional minimum order, branches, on/off,
-  and status (действует / запланирована / завершена). It rejects a fixed discount that is bigger than a product's
-  price.
-- **ИКПУ**: code, package code and unit code per product, with per-row "Сгенерировать" and a bulk fill for
-  products missing a code. ⚠️ Codes come from a **demo reference** (`IkpuCatalog`). In production this must query
-  the tasnif.soliq.uz classifier.
-- **Склад**: inline editing of cost, weight, price, availability status (Безлимитный / Ограничено / Нет в
-  наличии) and quantity. Changes save on edit. Margin, last update and sales velocity (units per day, last 30
-  days) are shown. **История продаж** opens a side panel with totals and a 12-month chart.
+### Каталог and Маркетинг
+Категории, Товары (multilingual with AI translate/generate, photos, variants, per-branch availability, Excel import),
+Скидки (store-wide, branch-only, "from N сум"), Склад (stock per branch, used by checkout). Промокоды (checked at
+checkout), Баннеры (storefront slider), Отзывы (reply; the customer sees it in Мои отзывы).
 
-### Маркетинг
-Clicking "Маркетинг" only expands the submenu, the same as "Продукты".
-- **Рассылка**: messages sent through the Telegram bot. The table shows total, sent, not sent, clicks, blocked
-  and date/time. Creating one takes two steps, as the spec says. Step 1 picks recipients, either by segment
-  (platform, language, minimum orders, activity, bonus points) or by hand, with a live count of who the bot can
-  reach. Step 2 is the message: name, image, text (Telegram's length limits), an optional link button, and send
-  now or schedule, with a live Telegram preview. Each recipient gets a personal tracked link (`/r/{token}`), so
-  clicks are real, unique, and attributable per person. Scheduled broadcasts send when due and can be cancelled.
-- **Промокод**: percent or fixed discount, with a cap for percent codes, usage limit, minimum order, validity
-  period, and extra restrictions (first order only, platforms, categories). There's a code generator, usage
-  bars, and statuses (действует / запланирован / истёк / лимит исчерпан). A "Проверить промокод" box applies
-  the same rules checkout will use (`MarketingService.CheckPromo`). The category restriction is checked
-  against the cart, so it isn't part of that quick check.
-- **Источники**: a Telegram-bot or website link per ad/post/QR code (`t.me/bot?start=src_…` or
-  `?utm_source=…`), plus a short tracked link `/s/{slug}` that counts clicks. The table shows clicks, new and
-  existing users, orders, conversion, created date and last visit. Renaming keeps the link, so printed QR codes
-  keep working.
-- **СМС-рассылка**: status filter На модерации / В процессе / Подтверждённый / Отклонённый. Templates come
-  first and go through moderation, with a warning. The editor shows a live character and SMS-part count
-  (160 per SMS for Latin text, 70 for Cyrillic) and an automatic pre-check (no short links, not all caps, at most
-  6 parts). Campaigns use only approved templates and an audience.
-- **Пост для канала**: the spec's 5-step instructions with progress ticks, connecting the channel, then a post
-  composer (photo, text, button) with a live preview and a list of published posts.
-- **Баннер**: main slider or category banner. Separate mobile and desktop image or video. The tap target can be
-  a category, a product or a URL. The form has a phone-frame preview; the list has ordering and on/off.
-- **Обзоры**: review table (product, rating, status, customer, comment, date) with the Все / Новый / Отвечено
-  filter, a rating filter and search. You can reply with quick templates. Replies here and in Чат → Обзоры stay
-  in sync.
-
-Simulated (no external services): Telegram delivery, with ~4% of bot users marked as having blocked the bot and
-non-bot customers marked "не отправлено". SMS moderation approves a template after 30 s; a campaign is in
-moderation for 20 s, sending for 20 s, then confirmed with 97% delivered. The channel check only validates the
-channel name format. New/existing users and orders per source are seeded; in production the storefront would
-attribute them.
+### Магазин (`/store`, `StoreController`)
+Store name, phone, working hours and "О нас" text; delivery fee, free-delivery threshold and delivery terms;
+return terms; the overdue limit; branches (add/edit on a map, copy another branch's stock, delete only without
+orders). All of it shows on the storefront's info pages, checkout and branch lists straight away.
 
 ## Layout
 
 ```
 backend/PlumMarket.Api/
   Domain/Entities.cs          orders, customers, branches, templates, settings
-  Data/                       DbContext + deterministic seeder
-  Services/OrderWorkflow.cs   status changes → overdue sweep, bonus accrual, auto-replies
+  Domain/Tenancy.cs           Store, AdminUser, AdminSession + IStoreOwned (what a merchant owns)
+  Data/AppDbContext.cs        DbContext; one global query filter per store-owned entity
+  Data/StoreProvisioner.cs    the template a store is created with at registration
+  Services/AdminAuth.cs       registration/login by phone + PBKDF2 password, bearer sessions
+  Middleware/StoreMiddleware  resolves the store of every request (admin token, or shop slug)
+  Domain/OrderFlow.cs         the order status flow: steps, next step, who may cancel, overdue rule
+  Services/OrderWorkflow.cs   status changes → history, bonus accrual, messages to the customer's chat
   Services/OrderFilter.cs     filters shared by list / export / assembly sheet
   Services/OrderDocuments.cs  Excel export, PDF/Excel assembly sheet
   Domain/Catalog.cs, Chat.cs  categories, products (JSON-localized), stock, discounts, reviews; conversations
@@ -274,11 +238,15 @@ backend/PlumMarket.Api/
   Services/ChatService.cs     incoming/outgoing messages, auto-reply, review replies
   Domain/Marketing.cs         broadcasts (+recipients), promo codes, traffic sources, SMS, channel posts, banners
   Services/MarketingService   audience segments, simulated delivery/moderation, SMS parts, promo validation
-  Controllers/                Dashboard, Orders, Customers, Settings, Chat, Categories, Products (+import),
+  Controllers/                Auth (register/login/me), Stores (directory), Dashboard (+setup checklist),
+                              Orders, Customers, Settings, Chat, Categories, Products (+import),
                               Discounts, Ikpu, Stock, Uploads, Ai, Broadcasts, PromoCodes, Sources, Sms,
                               Channel, Banners, Reviews, Tracking (/r/{token}, /s/{slug} redirects)
 frontend/src/
-  views/                      DashboardView, OrdersView (+ orders/*), CustomersView (+ customers/*),
+  auth.ts                     admin session: token, register/login/logout, restore after reload
+  views/auth/AuthView.vue     вход и регистрация (one page, two modes)
+  shop/views/StoresView.vue   which storefront to open
+  views/                      DashboardView (+ SetupChecklist), OrdersView (+ orders/*), CustomersView (+ customers/*),
                               ChatView (+ chat/*), catalog/* (categories, products, discounts, ikpu, stock),
                               marketing/* (broadcasts, promo codes, sources, sms, channel post, banners, reviews)
   components/                 PeriodPicker, KpiCard, OrdersMap, Modal, Pager, PlatformIcon, Icon,
@@ -288,13 +256,17 @@ frontend/src/
 
 ## Prototype shortcuts (not production)
 
-- No auth or multi-tenancy: this is one merchant, "Plum Bakery". The storefront API is public; its only writes are
-  visitor chat messages.
+- Admin passwords are PBKDF2-hashed and sessions are bearer tokens, but there is no SMS confirmation, password
+  reset, rate limiting or HTTPS-only cookie — the login spec's OTP step is still to come.
+- The storefront API is public per store (the shop slug identifies it); its only writes are orders, reviews and
+  visitor chat messages, and customers sign in with phone + name without a code.
 - The storefront loads the active catalog into memory per request for pricing/search. That's fine for hundreds
   of products; a real store needs a search index and cached prices.
 - SQLite with `EnsureCreated` instead of migrations. The dashboard aggregates in memory, which is fine for
   thousands of orders but needs SQL/materialized aggregates at scale.
-- Traffic sources are seeded, not tracked. Notifications and chat replies are stored, not delivered to
-  Telegram/Instagram/Wolt. Chat uses polling instead of websockets.
+- Chat and the order queue use polling instead of websockets.
+- The backend still contains unused code from the earlier full admin (broadcasts, SMS, channel posts, traffic
+  sources, ИКПУ, employees, Telegram/Instagram channels). The UI no longer reaches it.
 - Uploads are stored on local disk (`backend/PlumMarket.Api/uploads/`). SVG is not accepted.
-- ИКПУ codes come from a demo reference, not the official classifier.
+- Anyone can register a store on the demo, and `/shops` lists them all. That's deliberate for a prototype, not
+  something to ship.

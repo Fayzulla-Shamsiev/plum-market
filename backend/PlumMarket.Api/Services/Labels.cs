@@ -5,17 +5,7 @@ namespace PlumMarket.Api.Services;
 /// <summary>Russian display names used in exported files.</summary>
 public static class Labels
 {
-    public static string Status(OrderStatus s) => s switch
-    {
-        OrderStatus.New => "Новый",
-        OrderStatus.InProgress => "В процессе",
-        OrderStatus.Overdue => "Просрочен",
-        OrderStatus.Ready => "Готов",
-        OrderStatus.OnTheWay => "В пути",
-        OrderStatus.Completed => "Выполнен",
-        OrderStatus.Cancelled => "Отменён",
-        _ => s.ToString(),
-    };
+    public static string Status(OrderStatus s, DeliveryType d = DeliveryType.Delivery) => OrderFlow.Label(s, d);
 
     public static string Payment(PaymentMethod p) => p switch
     {

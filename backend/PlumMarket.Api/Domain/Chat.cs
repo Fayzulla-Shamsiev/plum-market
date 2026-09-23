@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace PlumMarket.Api.Domain;
 
 /// <summary>Channels the unified inbox receives messages from. Wolt exists only here (no storefront orders).</summary>
@@ -5,8 +7,9 @@ public enum ChatChannel { Telegram, Instagram, Website, Wolt }
 
 public enum MessageDirection { In, Out }
 
-public class Conversation
+public class Conversation : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int? CustomerId { get; set; }
     public Customer? Customer { get; set; }
@@ -28,8 +31,9 @@ public class Conversation
     public List<ChatMessage> Messages { get; set; } = new();
 }
 
-public class ChatMessage
+public class ChatMessage : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int ConversationId { get; set; }
     public MessageDirection Direction { get; set; }

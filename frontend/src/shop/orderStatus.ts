@@ -1,25 +1,19 @@
-import type { DeliveryType, OrderStatus } from './api'
+import type { OrderStatus } from './api'
 import { t, type Key } from './i18n'
+import type { DeliveryType } from './api'
 
-// Customer-facing order statuses. "Просрочен" is an internal flag for the merchant; the customer still sees "Новый".
+// Customer-facing order statuses, the same flow the store works through:
+// Новый → В сборке → Готов к отправке → Передан в доставку → В пути → Доставлен → Завершён
+// (pickup: Новый → В сборке → Готов к выдаче → Завершён).
 export function statusKey(s: OrderStatus, d: DeliveryType): Key {
-  switch (s) {
-    case 'New': case 'Overdue': return 'st_New'
-    case 'InProgress': return 'st_InProgress'
-    case 'Ready': return d === 'Pickup' ? 'st_ReadyPickup' : 'st_Ready'
-    case 'OnTheWay': return 'st_OnTheWay'
-    case 'Completed': return d === 'Pickup' ? 'st_PickedUp' : 'st_Delivered'
-    case 'Cancelled': return 'st_Cancelled'
-  }
+  if (s === 'Ready' && d === 'Pickup') return 'st_ReadyPickup'
+  return `st_${s}` as Key
 }
 export const statusText = (s: OrderStatus, d: DeliveryType) => t(statusKey(s, d))
 
-/** Progress steps shown on the order page; pickup orders skip "В пути". */
+/** Fallback when an older API response has no steps. */
 export function steps(d: DeliveryType): OrderStatus[] {
-  return d === 'Pickup' ? ['New', 'InProgress', 'Ready', 'Completed'] : ['New', 'InProgress', 'Ready', 'OnTheWay', 'Completed']
-}
-export function stepIndex(s: OrderStatus, d: DeliveryType) {
-  return steps(d).indexOf(s === 'Overdue' ? 'New' : s)
+  return d === 'Pickup' ? ['New', 'Assembling', 'Ready', 'Completed'] : ['New', 'Assembling', 'Ready', 'HandedToCourier', 'OnTheWay', 'Delivered', 'Completed']
 }
 export const tone = (s: OrderStatus) =>
-  s === 'Cancelled' ? 'grey' : s === 'Completed' ? 'green' : s === 'Ready' || s === 'OnTheWay' ? 'blue' : 'amber'
+  s === 'Cancelled' ? 'grey' : s === 'Completed' || s === 'Delivered' ? 'green' : s === 'New' || s === 'Assembling' ? 'amber' : 'blue'

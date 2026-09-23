@@ -1,27 +1,23 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { catalogApi, chatApi, type ChatChannel, type ConversationDetail, type ConversationRow, type Upload } from '../api'
+import { catalogApi, chatApi, type ConversationDetail, type ConversationRow, type Upload } from '../api'
 import Icon from '../components/Icon.vue'
-import PlatformIcon from '../components/PlatformIcon.vue'
-import { channelLabel, count, loc, timeShort } from '../format'
+import { count, loc, timeShort } from '../format'
 import { refreshChatUnread } from '../store'
 import ChatSettingsPanel from './chat/ChatSettingsPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
 
-// Categories from the spec: Все, Не прочитано, Instagram, Обзоры.
+// MVP: every conversation comes from the storefront (support chat, "Написать продавцу", product reviews).
 const categories = [
   { key: 'all', label: 'Все' },
   { key: 'unread', label: 'Не прочитано' },
-  { key: 'instagram', label: 'Instagram' },
-  { key: 'reviews', label: 'Обзоры' },
+  { key: 'reviews', label: 'Отзывы' },
 ]
-const channels: ChatChannel[] = ['Telegram', 'Instagram', 'Website', 'Wolt']
 
 const filter = ref('all')
-const channel = ref<ChatChannel | ''>('')
 const search = ref('')
 const list = ref<ConversationRow[]>([])
 const counts = ref({ unread: 0, reviews: 0 })
@@ -46,7 +42,7 @@ const emojis = ['😊', '🙂', '😉', '😍', '🥰', '😂', '🙏', '👍', 
 
 async function loadList() {
   try {
-    const r = await chatApi.conversations({ filter: filter.value, channel: channel.value, search: search.value.trim() })
+    const r = await chatApi.conversations({ filter: filter.value, search: search.value.trim() })
     list.value = r.items
     counts.value = r.counts
   } catch {
@@ -79,7 +75,7 @@ function scrollToBottom() {
 
 let searchTimer = 0
 watch(search, () => { clearTimeout(searchTimer); searchTimer = window.setTimeout(loadList, 250) })
-watch([filter, channel], loadList)
+watch(filter, loadList)
 watch(activeId, () => { text.value = ''; pending.value = null; loadConversation() })
 
 // Clients page → "Чат": /chat?customer=<id> resolves to (or creates) that customer's thread.
@@ -157,13 +153,6 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-async function simulate() {
-  const r = await chatApi.simulate()
-  await loadList()
-  refreshChatUnread()
-  if (r.id === activeId.value) loadConversation()
-}
-
 /** Messages grouped under a date divider. */
 const grouped = computed(() => {
   const groups: { day: string; items: ConversationDetail['messages'] }[] = []
@@ -186,10 +175,6 @@ const stars = (n: number) => '★'.repeat(n) + '☆'.repeat(5 - n)
     <aside class="inbox" :class="{ hideOnMobile: activeId }">
       <div class="inbox-head">
         <h1>Все чаты</h1>
-        <select v-model="channel" class="select sm" aria-label="Платформа">
-          <option value="">Все платформы</option>
-          <option v-for="c in channels" :key="c" :value="c">{{ channelLabel[c] }}</option>
-        </select>
         <button class="btn btn-ghost btn-icon" title="Настройки чата" aria-label="Настройки чата" @click="settingsOpen = true">
           <Icon name="settings" />
         </button>
@@ -210,10 +195,7 @@ const stars = (n: number) => '★'.repeat(n) + '☆'.repeat(5 - n)
       <ul class="threads">
         <li v-for="c in list" :key="c.id">
           <button class="thread" :class="{ active: c.id === activeId, unread: c.unreadCount > 0 }" @click="open(c.id)">
-            <span class="avatar" :class="c.channel">
-              {{ c.channel === 'Wolt' ? 'W' : initials(c.displayName) }}
-              <PlatformIcon :platform="c.channel" class="mini" />
-            </span>
+            <span class="avatar">{{ initials(c.displayName) }}</span>
             <span class="t-body">
               <span class="t-top">
                 <b class="t-name">{{ c.displayName }}</b>
@@ -231,26 +213,22 @@ const stars = (n: number) => '★'.repeat(n) + '☆'.repeat(5 - n)
         <li v-if="listLoaded && !list.length" class="empty">Диалогов не найдено</li>
         <li v-if="!listLoaded"><div class="skeleton" style="height: 320px; margin: 10px" /></li>
       </ul>
-      <button class="btn btn-ghost sim" title="Имитировать входящее сообщение от клиента" @click="simulate">
-        <Icon name="zap" />Входящее сообщение (тест)
-      </button>
     </aside>
 
     <section class="thread-pane" :class="{ hideOnMobile: !activeId }">
       <div v-if="!activeId" class="placeholder">
         <Icon name="chat" />
         <p>Выберите диалог слева</p>
-        <p class="faint small">Сообщения из Telegram, Instagram, сайта и Wolt — в одном окне</p>
+        <p class="faint small">Сообщения покупателей с сайта, вопросы о товарах и отзывы</p>
       </div>
 
       <template v-else-if="conv">
         <header class="conv-head">
           <button class="btn btn-ghost btn-icon back" aria-label="Назад к списку" @click="router.push('/chat')"><Icon name="chevronLeft" /></button>
-          <span class="avatar lg" :class="conv.channel">{{ conv.channel === 'Wolt' ? 'W' : initials(conv.displayName) }}</span>
+          <span class="avatar lg">{{ initials(conv.displayName) }}</span>
           <div class="grow who">
             <div class="row" style="gap: 8px">
               <b>{{ conv.displayName }}</b>
-              <PlatformIcon :platform="conv.channel" show-label class="muted small" />
             </div>
             <div class="faint small">
               <template v-if="conv.customer">

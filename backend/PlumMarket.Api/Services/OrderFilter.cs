@@ -10,25 +10,26 @@ public class OrderFilter
     public string? Tab { get; set; }
     public string? Search { get; set; }
     public int? BranchId { get; set; }
-    public int? EmployeeId { get; set; }
-    public PaymentMethod? Payment { get; set; }
     public DeliveryType? Delivery { get; set; }
-    public Platform? Platform { get; set; }
     /// <summary>Comma-separated list of statuses.</summary>
     public string? Statuses { get; set; }
     public DateOnly? From { get; set; }
     public DateOnly? To { get; set; }
 
+    /// <summary>Order list tabs. "overdue" isn't a status set: it's New/Assembling orders past the store's time limit.</summary>
     public static readonly Dictionary<string, OrderStatus[]> Tabs = new()
     {
         ["all"] = Enum.GetValues<OrderStatus>(),
         ["new"] = [OrderStatus.New],
-        ["inProgress"] = [OrderStatus.InProgress],
-        ["overdue"] = [OrderStatus.Overdue],
+        ["assembling"] = [OrderStatus.Assembling],
         ["ready"] = [OrderStatus.Ready],
-        ["onTheWay"] = [OrderStatus.OnTheWay],
+        ["delivery"] = [OrderStatus.HandedToCourier, OrderStatus.OnTheWay],
+        ["delivered"] = [OrderStatus.Delivered],
         ["history"] = [OrderStatus.Completed, OrderStatus.Cancelled],
     };
+
+    /// <summary>Set by the controller from store settings, used by the "overdue" tab.</summary>
+    public DateTime? OverdueBefore { get; set; }
 
     public List<OrderStatus> ParsedStatuses() => (Statuses ?? "")
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -39,10 +40,7 @@ public class OrderFilter
     public async Task<IQueryable<Order>> ApplyAsync(IQueryable<Order> q, AppDbContext db)
     {
         if (BranchId is { } b) q = q.Where(o => o.BranchId == b);
-        if (EmployeeId is { } e) q = q.Where(o => o.EmployeeId == e);
-        if (Payment is { } p) q = q.Where(o => o.PaymentMethod == p);
         if (Delivery is { } d) q = q.Where(o => o.DeliveryType == d);
-        if (Platform is { } pl) q = q.Where(o => o.Platform == pl);
         if (From is { } from) q = q.Where(o => o.CreatedAt >= from.ToDateTime(TimeOnly.MinValue));
         if (To is { } to) q = q.Where(o => o.CreatedAt < to.AddDays(1).ToDateTime(TimeOnly.MinValue));
         var statuses = ParsedStatuses();
@@ -68,7 +66,14 @@ public class OrderFilter
 
     public IQueryable<Order> ApplyTab(IQueryable<Order> q)
     {
+        if (Tab == "overdue") return Overdue(q);
         if (Tab is null || Tab == "all" || !Tabs.TryGetValue(Tab, out var statuses)) return q;
         return q.Where(o => statuses.Contains(o.Status));
+    }
+
+    public IQueryable<Order> Overdue(IQueryable<Order> q)
+    {
+        var before = OverdueBefore ?? DateTime.Now.AddMinutes(-90);
+        return q.Where(o => (o.Status == OrderStatus.New || o.Status == OrderStatus.Assembling) && o.CreatedAt < before);
     }
 }

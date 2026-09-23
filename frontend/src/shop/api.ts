@@ -1,6 +1,7 @@
 import { qs } from '../api'
 import { lang } from './i18n'
 import { authToken, signedOut, type Me } from './state/auth'
+import { storeSlug } from './state/store'
 
 export interface Card {
   id: number
@@ -135,7 +136,7 @@ export interface ChatThread {
 }
 
 export type DeliveryType = 'Pickup' | 'Delivery'
-export type OrderStatus = 'New' | 'InProgress' | 'Overdue' | 'Ready' | 'OnTheWay' | 'Completed' | 'Cancelled'
+export type OrderStatus = 'New' | 'Assembling' | 'Ready' | 'HandedToCourier' | 'OnTheWay' | 'Delivered' | 'Completed' | 'Cancelled'
 
 export interface SavedAddress { id: number; address: string; details: string | null; lat: number | null; lng: number | null; lastUsedAt: string }
 
@@ -196,6 +197,10 @@ export interface ShopOrder {
   total: number
   canCancel: boolean
   cancelReason: string | null
+  /** When each step happened. */
+  history: { status: OrderStatus; at: string }[]
+  /** This order's flow (pickup skips the courier steps). */
+  steps: OrderStatus[]
   items: { productId: number; name: string; variant: string | null; qty: number; price: number; sum: number; image: string | null }[]
 }
 
@@ -236,11 +241,21 @@ async function send<T>(method: string, path: string, params: Params = {}, body?:
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (authToken.value) headers.Authorization = `Bearer ${authToken.value}`
+  // Which shop this storefront belongs to; the server answers with that store's catalog, prices and orders.
+  if (storeSlug.value) headers['X-Store'] = storeSlug.value
   const res = await fetch(`/api/shop/${path}${qs({ ...params, lang: lang.value })}`, {
     method, headers, signal, body: body === undefined ? undefined : JSON.stringify(body),
   })
   // Session expired or revoked: forget it; the page will ask to sign in again.
   if (res.status === 401 && authToken.value) signedOut()
+  // The shop this browser remembers is gone (deleted, or the prototype database was reset).
+  if (res.status === 404 && storeSlug.value) {
+    const body = await res.clone().json().catch(() => null) as { code?: string } | null
+    if (body?.code === 'store_not_found') {
+      storeSlug.value = ''
+      window.location.assign('/shops')
+    }
+  }
   if (res.status === 204) return undefined as T
   let data: unknown = null
   try { data = await res.json() } catch { /* empty body */ }

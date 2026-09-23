@@ -1,18 +1,31 @@
+using System.Reflection;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PlumMarket.Api.Domain;
+using PlumMarket.Api.Services;
 
 namespace PlumMarket.Api.Data;
 
-public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public class AppDbContext(DbContextOptions<AppDbContext> options, StoreContext tenant) : DbContext(options)
 {
     /// <summary>
     /// Bump when the model changes. The prototype has no migrations: on start-up a DB with a different
     /// version is dropped and re-seeded (see <see cref="Program"/>).
     /// </summary>
-    public const int SchemaVersion = 6;
+    public const int SchemaVersion = 8;
+
+    /// <summary>
+    /// The store this request works with, resolved by <see cref="StoreMiddleware"/>. Every merchant-owned entity
+    /// is filtered by it, so a controller cannot accidentally read another store's data. Null on requests that
+    /// belong to no store (sign-in, the store directory) — those queries then return nothing.
+    /// </summary>
+    public int? CurrentStoreId => tenant.StoreId;
+
+    public DbSet<Store> Stores => Set<Store>();
+    public DbSet<AdminUser> Admins => Set<AdminUser>();
+    public DbSet<AdminSession> AdminSessions => Set<AdminSession>();
 
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Employee> Employees => Set<Employee>();
@@ -49,12 +62,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         b.Entity<Order>().HasIndex(o => o.CreatedAt);
         b.Entity<Order>().HasIndex(o => o.Status);
         b.Entity<Order>().HasMany(o => o.Items).WithOne().HasForeignKey(i => i.OrderId);
+        b.Entity<Order>().HasMany(o => o.History).WithOne().HasForeignKey(h => h.OrderId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<OrderStatusChange>().Property(h => h.Status).HasConversion<string>();
         b.Entity<OrderItem>().HasIndex(i => i.ProductId);
         b.Entity<Customer>().HasIndex(c => c.Phone);
         b.Entity<CustomerSession>().HasIndex(s => s.TokenHash).IsUnique();
         b.Entity<CustomerAddress>().HasIndex(a => a.CustomerId);
         b.Entity<SourceVisit>().HasIndex(v => v.Date);
-        b.Entity<AutoReplyTemplate>().HasIndex(t => new { t.Status, t.Language }).IsUnique();
+        b.Entity<AutoReplyTemplate>().HasIndex(t => new { t.StoreId, t.Status, t.Language }).IsUnique();
 
         // Enums as strings keep the SQLite file readable.
         b.Entity<Order>().Property(o => o.Status).HasConversion<string>();
@@ -116,12 +131,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         b.Entity<PromoCode>(e =>
         {
             e.Property(x => x.Type).HasConversion<string>();
-            e.HasIndex(x => x.Code).IsUnique();
+            e.HasIndex(x => new { x.StoreId, x.Code }).IsUnique();
         });
         b.Entity<TrafficSource>(e =>
         {
             e.Property(x => x.Type).HasConversion<string>();
-            e.HasIndex(x => x.Slug).IsUnique();
+            e.HasIndex(x => new { x.StoreId, x.Slug }).IsUnique();
         });
         b.Entity<SmsTemplate>().Property(x => x.Status).HasConversion<string>();
         b.Entity<SmsCampaign>().Property(x => x.Status).HasConversion<string>();
@@ -130,6 +145,47 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Type).HasConversion<string>();
             e.Property(x => x.LinkType).HasConversion<string>();
         });
+
+        // --- Stores and their administrators (not store-scoped themselves) ---
+        b.Entity<Store>().HasIndex(s => s.Slug).IsUnique();
+        b.Entity<AdminUser>(e =>
+        {
+            e.HasIndex(a => a.Phone).IsUnique();
+            e.HasOne(a => a.Store).WithMany().HasForeignKey(a => a.StoreId);
+        });
+        b.Entity<AdminSession>(e =>
+        {
+            e.HasIndex(x => x.TokenHash).IsUnique();
+            e.HasOne(x => x.Admin).WithMany().HasForeignKey(x => x.AdminUserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // One filter per merchant-owned entity — the whole data separation of the platform.
+        var apply = typeof(AppDbContext).GetMethod(nameof(FilterByStore), BindingFlags.NonPublic | BindingFlags.Instance)!;
+        foreach (var type in b.Model.GetEntityTypes()
+                     .Where(t => t.BaseType is null && !t.IsOwned() && typeof(IStoreOwned).IsAssignableFrom(t.ClrType))
+                     .Select(t => t.ClrType).ToList())
+            apply.MakeGenericMethod(type).Invoke(this, [b]);
+    }
+
+    // The lambda reads the property off this context instance, so the cached model still filters by the store of
+    // whichever context is running the query.
+    void FilterByStore<T>(ModelBuilder b) where T : class, IStoreOwned =>
+        b.Entity<T>().HasQueryFilter(e => e.StoreId == CurrentStoreId);
+
+    public override int SaveChanges() { StampStore(); return base.SaveChanges(); }
+
+    public override Task<int> SaveChangesAsync(CancellationToken token = default)
+    {
+        StampStore();
+        return base.SaveChangesAsync(token);
+    }
+
+    /// <summary>New rows belong to the store of the current request unless a caller set it explicitly.</summary>
+    void StampStore()
+    {
+        if (tenant.StoreId is not { } storeId) return;
+        foreach (var entry in ChangeTracker.Entries<IStoreOwned>())
+            if (entry.State == EntityState.Added && entry.Entity.StoreId == 0) entry.Entity.StoreId = storeId;
     }
 
     static ValueConverter<T, string> JsonConverter<T>() where T : new() => new(

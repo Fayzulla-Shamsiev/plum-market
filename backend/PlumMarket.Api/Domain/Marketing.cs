@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace PlumMarket.Api.Domain;
 
 // ---------------------------------------------------------------- Рассылка (Telegram-bot broadcast)
@@ -6,8 +8,9 @@ public enum BroadcastStatus { Scheduled, Sent }
 
 public enum DeliveryStatus { Sent, NotSent, Blocked }
 
-public class Broadcast
+public class Broadcast : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public string? ImageUrl { get; set; }
@@ -21,8 +24,9 @@ public class Broadcast
     public List<BroadcastRecipient> Recipients { get; set; } = new();
 }
 
-public class BroadcastRecipient
+public class BroadcastRecipient : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int BroadcastId { get; set; }
     public int CustomerId { get; set; }
@@ -34,8 +38,9 @@ public class BroadcastRecipient
 
 // ---------------------------------------------------------------- Промокод
 
-public class PromoCode
+public class PromoCode : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Code { get; set; } = "";
     public DiscountType Type { get; set; }
@@ -61,8 +66,9 @@ public class PromoCode
 
 public enum SourceType { Telegram, Website }
 
-public class TrafficSource
+public class TrafficSource : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public SourceType Type { get; set; }
     public string Name { get; set; } = "";
@@ -81,8 +87,9 @@ public class TrafficSource
 /// <summary>Moderation state shared by SMS templates and SMS campaigns.</summary>
 public enum SmsStatus { Moderation, InProgress, Confirmed, Rejected }
 
-public class SmsTemplate
+public class SmsTemplate : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public string Text { get; set; } = "";
@@ -93,8 +100,9 @@ public class SmsTemplate
     public DateTime? ModeratedAt { get; set; }
 }
 
-public class SmsCampaign
+public class SmsCampaign : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public int TemplateId { get; set; }
@@ -111,8 +119,9 @@ public class SmsCampaign
 
 // ---------------------------------------------------------------- Пост для канала
 
-public class ChannelPost
+public class ChannelPost : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Channel { get; set; } = "";
     public string? ImageUrl { get; set; }
@@ -129,8 +138,9 @@ public enum BannerType { Main, Category }
 /// <summary>Where a tap on the banner leads.</summary>
 public enum BannerLink { None, Category, Product, Url }
 
-public class Banner
+public class Banner : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Title { get; set; } = "";
     public BannerType Type { get; set; }

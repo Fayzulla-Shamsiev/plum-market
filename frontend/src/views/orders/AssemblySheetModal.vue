@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { api, download, type OrderStatus } from '../../api'
+import { api, download, openFile, type OrderStatus } from '../../api'
 import Icon from '../../components/Icon.vue'
 import Modal from '../../components/Modal.vue'
 import { periodFor } from '../../period'
@@ -10,14 +10,14 @@ const emit = defineEmits<{ close: [] }>()
 const today = periodFor('today')
 const from = ref(today.from)
 const to = ref(today.to)
-const statuses = ref<OrderStatus[]>(['New', 'InProgress', 'Overdue', 'Ready'])
+const statuses = ref<OrderStatus[]>(['New', 'Assembling'])
 const mode = ref<'orders' | 'products'>('orders')
 const format = ref<'pdf' | 'xlsx'>('pdf')
 
 function run() {
   const url = api.assemblyUrl({ from: from.value, to: to.value, statuses: statuses.value.join(','), mode: mode.value, format: format.value })
   // PDFs are handy to preview/print straight away; Excel files just download.
-  if (format.value === 'pdf') window.open(url, '_blank', 'noopener')
+  if (format.value === 'pdf') openFile(url)
   else download(url)
   emit('close')
 }

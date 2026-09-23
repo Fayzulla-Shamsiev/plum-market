@@ -75,7 +75,7 @@ public class ShopOrdersController(AppDbContext db, ShopAuth auth, CheckoutServic
 
     async Task<object> View(int id, Customer customer)
     {
-        var o = await db.Orders.AsNoTracking().Include(x => x.Branch).Include(x => x.Items).FirstAsync(x => x.Id == id);
+        var o = await db.Orders.AsNoTracking().Include(x => x.Branch).Include(x => x.Items).Include(x => x.History).AsSplitQuery().FirstAsync(x => x.Id == id);
         var productIds = o.Items.Select(i => i.ProductId).ToList();
         var images = await db.Products.AsNoTracking().Where(p => productIds.Contains(p.Id))
             .ToDictionaryAsync(p => p.Id, p => p.Media.FirstOrDefault(m => m.Type == "image")?.Url);
@@ -88,8 +88,11 @@ public class ShopOrdersController(AppDbContext db, ShopAuth auth, CheckoutServic
             recipientPhone = o.RecipientPhone ?? customer.Phone,
             itemsCount = o.Items.Sum(i => i.Quantity),
             o.Subtotal, o.PromoCode, o.PromoDiscount, o.DeliveryCost, o.Total,
-            canCancel = CheckoutService.Cancellable.Contains(o.Status),
+            canCancel = OrderFlow.CustomerCanCancel(o.Status),
             o.CancelReason,
+            // When each step happened, for the progress bar on the order page.
+            history = o.History.OrderBy(h => h.At).ThenBy(h => h.Id).Select(h => new { h.Status, h.At }),
+            steps = OrderFlow.Steps(o.DeliveryType),
             items = o.Items.Select(i => new
             {
                 i.ProductId,

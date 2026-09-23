@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { catalogApi, marketingApi, type CategoryRow, type Platform, type PromoInput, type PromoRow } from '../../api'
+import { catalogApi, marketingApi, type CategoryRow, type PromoInput, type PromoRow } from '../../api'
 import Icon from '../../components/Icon.vue'
 import Modal from '../../components/Modal.vue'
-import PlatformIcon from '../../components/PlatformIcon.vue'
-import { loc, platformLabel } from '../../format'
+import { loc } from '../../format'
 
 const props = defineProps<{ promo: PromoRow | null }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
@@ -96,13 +95,6 @@ async function save() {
       <fieldset>
         <legend>Дополнительные ограничения</legend>
         <label class="check"><input v-model="form.firstOrderOnly" type="checkbox" />Только на первый заказ клиента</label>
-        <div class="field">
-          <span>Платформы <em class="faint">(пусто — все)</em></span>
-          <div class="chips">
-            <button v-for="k in (Object.keys(platformLabel) as Platform[])" :key="k" type="button" class="chip" :class="{ active: form.platforms.includes(k) }"
-                    @click="form.platforms = toggle(form.platforms, k)"><PlatformIcon :platform="k" show-label /></button>
-          </div>
-        </div>
         <div class="field">
           <span>Категории <em class="faint">(пусто — весь каталог)</em></span>
           <div class="chips">

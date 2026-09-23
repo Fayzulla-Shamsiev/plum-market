@@ -124,10 +124,12 @@ table.data tr:last-child td { border-bottom: none; }
 .badge { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 11px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .badge.New { color: var(--info); background: var(--info-bg); }
-.badge.InProgress { color: #6a3fb5; background: #efe9fb; }
-.badge.Overdue { color: var(--bad); background: var(--bad-bg); }
+.badge.Assembling { color: #6a3fb5; background: #efe9fb; }
 .badge.Ready { color: #0b7a78; background: #e1f4f3; }
+.badge.HandedToCourier { color: #9a5b00; background: #fff1dc; }
 .badge.OnTheWay { color: var(--warn); background: var(--warn-bg); }
+.badge.Delivered { color: #2a6b1f; background: #e8f5e2; }
+.badge.Overdue { color: var(--bad); background: var(--bad-bg); }
 .badge.Completed { color: var(--good); background: var(--good-bg); }
 .badge.Cancelled { color: var(--text-2); background: #eeedf1; }
 

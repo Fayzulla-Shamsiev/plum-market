@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace PlumMarket.Api.Domain;
 
 // Money is stored as whole UZS (сум) in long — UZS has no practical sub-units,
@@ -5,14 +7,20 @@ namespace PlumMarket.Api.Domain;
 
 public enum Platform { Telegram, Website, Instagram }
 
-public enum OrderStatus { New, InProgress, Overdue, Ready, OnTheWay, Completed, Cancelled }
+/// <summary>
+/// Order lifecycle from the MVP spec: Новый → В сборке → Готов к отправке → Передан в доставку → В пути → Доставлен →
+/// Завершён. Pickup orders skip the courier steps (Готов к выдаче → Завершён). See <see cref="OrderFlow"/>.
+/// "Просрочен" is not a status: it's a flag on orders that wait too long (<see cref="OrderFlow.IsOverdue"/>).
+/// </summary>
+public enum OrderStatus { New, Assembling, Ready, HandedToCourier, OnTheWay, Delivered, Completed, Cancelled }
 
 public enum PaymentMethod { Cash, CardToCard, Click, Payme }
 
 public enum DeliveryType { Pickup, Delivery }
 
-public class Branch
+public class Branch : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public string Address { get; set; } = "";
@@ -23,16 +31,18 @@ public class Branch
     public double Lng { get; set; }
 }
 
-public class Employee
+public class Employee : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public string Phone { get; set; } = "";
     public string Role { get; set; } = "";
 }
 
-public class Customer
+public class Customer : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string FullName { get; set; } = "";
     public string? Username { get; set; }
@@ -54,8 +64,9 @@ public class Customer
     public List<Order> Orders { get; set; } = new();
 }
 
-public class Order
+public class Order : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int CustomerId { get; set; }
     public Customer Customer { get; set; } = null!;
@@ -93,10 +104,24 @@ public class Order
     public string? CancelReason { get; set; }
 
     public List<OrderItem> Items { get; set; } = new();
+    public List<OrderStatusChange> History { get; set; } = new();
 }
 
-public class OrderItem
+/// <summary>When an order entered each status and who moved it — the delivery-control timeline.</summary>
+public class OrderStatusChange : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
+    public int Id { get; set; }
+    public int OrderId { get; set; }
+    public OrderStatus Status { get; set; }
+    public DateTime At { get; set; }
+    /// <summary>"Магазин" (admin) or "Покупатель" (storefront).</summary>
+    public string By { get; set; } = "Магазин";
+}
+
+public class OrderItem : IStoreOwned
+{
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int OrderId { get; set; }
     public int ProductId { get; set; }
@@ -109,8 +134,9 @@ public class OrderItem
 }
 
 /// <summary>Daily unique users per traffic source (fed by the storefront in the real system).</summary>
-public class SourceVisit
+public class SourceVisit : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Source { get; set; } = "";
     public DateTime Date { get; set; }
@@ -118,8 +144,9 @@ public class SourceVisit
 }
 
 /// <summary>Auto-responder text sent to a customer when an order moves into <see cref="Status"/>.</summary>
-public class AutoReplyTemplate
+public class AutoReplyTemplate : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public OrderStatus Status { get; set; }
     public string Language { get; set; } = "ru";
@@ -127,8 +154,9 @@ public class AutoReplyTemplate
     public string Text { get; set; } = "";
 }
 
-public class NotificationLog
+public class NotificationLog : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int OrderId { get; set; }
     public int CustomerId { get; set; }
@@ -138,9 +166,10 @@ public class NotificationLog
     public DateTime SentAt { get; set; }
 }
 
-/// <summary>Single-row store settings for this prototype (one merchant).</summary>
-public class StoreSettings
+/// <summary>Settings of one store — a single row per store, created with it at registration.</summary>
+public class StoreSettings : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string StoreName { get; set; } = "";
     public string BotUsername { get; set; } = "";
@@ -176,8 +205,8 @@ public class StoreSettings
     public string? DeliveryTerms { get; set; }
     public string? ReturnTerms { get; set; }
 
-    /// <summary>Storefront address used in tracking links and banner/broadcast buttons.</summary>
-    public string StoreDomain { get; set; } = "plum-bakery.plum.uz";
+    /// <summary>Storefront address used in tracking links and banner/broadcast buttons ("{slug}.plum.uz").</summary>
+    public string StoreDomain { get; set; } = "";
 
     // --- Product import from an external source (Продукты → Импорт → параметры) ---
     public string? ImportSource { get; set; }
@@ -187,8 +216,9 @@ public class StoreSettings
 }
 
 /// <summary>Storefront login session. Only a hash of the token is stored.</summary>
-public class CustomerSession
+public class CustomerSession : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string TokenHash { get; set; } = "";
     public int CustomerId { get; set; }
@@ -198,8 +228,9 @@ public class CustomerSession
 }
 
 /// <summary>Delivery address saved by a customer at checkout, offered again next time.</summary>
-public class CustomerAddress
+public class CustomerAddress : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int CustomerId { get; set; }
     public string Address { get; set; } = "";

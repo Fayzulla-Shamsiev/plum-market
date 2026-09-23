@@ -10,26 +10,25 @@ namespace PlumMarket.Api.Controllers;
 public class CustomersController(AppDbContext db) : ControllerBase
 {
     [HttpGet]
-    public async Task<IActionResult> List(string? search, Platform? platform, string sort = "lastVisit", int page = 1, int pageSize = 20)
+    public async Task<IActionResult> List(string? search, string sort = "lastVisit", int page = 1, int pageSize = 20)
     {
         pageSize = Math.Clamp(pageSize, 5, 100);
         var rows = await db.Customers.AsNoTracking()
             .Select(c => new CustomerRow(
-                c.Id, c.FullName, c.Username, c.Phone, c.Platform, c.BonusPoints, c.CreatedAt, c.LastVisitAt, c.Language,
+                c.Id, c.FullName, c.Email, c.Phone, c.BonusPoints, c.CreatedAt, c.LastVisitAt, c.Language,
                 c.Orders.Count(o => o.Status != OrderStatus.Cancelled),
                 c.Orders.Where(o => o.Status == OrderStatus.Completed).Sum(o => o.Total)))
             .ToListAsync();
 
         // Filtered in memory: SQLite's case-insensitive matching only covers ASCII, and names are Cyrillic.
         IEnumerable<CustomerRow> list = rows;
-        if (platform is { } p) list = list.Where(r => r.Platform == p);
         if (!string.IsNullOrWhiteSpace(search))
         {
-            var term = search.Trim().TrimStart('@');
+            var term = search.Trim();
             var digits = new string(term.Where(char.IsDigit).ToArray());
             list = list.Where(r =>
                 r.FullName.Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                (r.Username ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                (r.Email ?? "").Contains(term, StringComparison.OrdinalIgnoreCase) ||
                 (digits.Length >= 3 && r.Phone.Replace(" ", "").Contains(digits)));
         }
         list = sort switch
@@ -49,7 +48,7 @@ public class CustomersController(AppDbContext db) : ControllerBase
         });
     }
 
-    public record CustomerRow(int Id, string FullName, string? Username, string Phone, Platform Platform, long BonusPoints,
+    public record CustomerRow(int Id, string FullName, string? Email, string Phone, long BonusPoints,
         DateTime CreatedAt, DateTime LastVisitAt, string Language, int Orders, long Spent);
 
     [HttpGet("{id:int}")]
@@ -59,12 +58,13 @@ public class CustomersController(AppDbContext db) : ControllerBase
         if (c is null) return NotFound();
         var orders = await db.Orders.AsNoTracking().Where(o => o.CustomerId == id)
             .OrderByDescending(o => o.CreatedAt)
-            .Select(o => new { o.Id, o.CreatedAt, o.Status, o.Total, o.Platform, o.BonusEarned })
+            .Select(o => new { o.Id, o.CreatedAt, o.Status, o.DeliveryType, o.Total, o.BonusEarned })
             .ToListAsync();
         var completed = orders.Where(o => o.Status == OrderStatus.Completed).ToList();
         return Ok(new
         {
-            c.Id, c.FullName, c.Username, c.Phone, c.Platform, c.Language, c.BonusPoints, c.CreatedAt, c.LastVisitAt,
+            c.Id, c.FullName, c.Email, c.Phone, c.Country, c.BirthDate, c.Gender, c.Language, c.BonusPoints, c.CreatedAt, c.LastVisitAt,
+            c.NotifyOrders, c.NotifyPromos,
             stats = new
             {
                 orders = orders.Count(o => o.Status != OrderStatus.Cancelled),

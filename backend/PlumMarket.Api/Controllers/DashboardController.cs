@@ -8,20 +8,37 @@ namespace PlumMarket.Api.Controllers;
 
 [ApiController]
 [Route("api/dashboard")]
-public class DashboardController(AppDbContext db, OrderWorkflow workflow) : ControllerBase
+public class DashboardController(AppDbContext db) : ControllerBase
 {
-    static readonly OrderStatus[] Active =
-        [OrderStatus.New, OrderStatus.InProgress, OrderStatus.Overdue, OrderStatus.Ready, OrderStatus.OnTheWay];
+    static readonly OrderStatus[] Active = OrderFlow.Active;
 
     /// <summary>
-    /// Everything the dashboard needs for [from, to] in one call. Revenue figures count completed orders only.
-    /// Deltas compare against the preceding period of the same length.
+    /// How far the store is from being open for business. A store is created empty at registration, so the
+    /// dashboard shows these steps (categories → products → store info and branch) until the first order arrives.
+    /// </summary>
+    [HttpGet("setup")]
+    public async Task<IActionResult> Setup([FromServices] StoreContext tenant)
+    {
+        var branch = await db.Branches.AsNoTracking().OrderBy(b => b.Id).FirstOrDefaultAsync();
+        return Ok(new
+        {
+            slug = tenant.Store?.Slug,
+            categories = await db.Categories.CountAsync(),
+            products = await db.Products.CountAsync(),
+            orders = await db.Orders.CountAsync(),
+            // The storefront shows the branch on the map and in "Связаться с нами"; an address is the minimum.
+            branchReady = branch is not null && branch.Address.Length > 0,
+        });
+    }
+
+    /// <summary>
+    /// Everything the dashboard needs for [from, to] in one call: orders, customers, sales (units sold), revenue and
+    /// the store's overall balance. Revenue counts completed orders only. Deltas compare against the preceding period
+    /// of the same length.
     /// </summary>
     [HttpGet]
     public async Task<IActionResult> Get(DateOnly? from, DateOnly? to, int? branchId)
     {
-        await workflow.SweepOverdueAsync();
-
         var today = DateOnly.FromDateTime(DateTime.Now);
         var f = from ?? today.AddDays(-29);
         var t = to ?? today;
@@ -45,10 +62,19 @@ public class DashboardController(AppDbContext db, OrderWorkflow workflow) : Cont
         var buckets = Bucketing.For(start, end);
 
         var branches = await db.Branches.AsNoTracking().ToListAsync();
-        var visits = await db.SourceVisits.AsNoTracking()
-            .Where(v => v.Date >= start && v.Date < end)
-            .GroupBy(v => v.Source).Select(g => new { Source = g.Key, Users = g.Sum(v => v.Users) })
-            .ToListAsync();
+
+        // Overall balance (all time, not the period): cash already received for completed orders, and cash still to
+        // collect for orders in progress (payment is cash on receipt).
+        var allTime = db.Orders.AsNoTracking();
+
+        if (branchId is { } bb) allTime = allTime.Where(o => o.BranchId == bb);
+        var received = await allTime.Where(o => o.Status == OrderStatus.Completed).SumAsync(o => o.Total);
+        var pending = await allTime.Where(o => Active.Contains(o.Status)).SumAsync(o => o.Total);
+        var pipeline = await allTime.Where(o => Active.Contains(o.Status)).GroupBy(o => o.Status)
+            .Select(g => new { status = g.Key, count = g.Count() }).ToListAsync();
+        var settings = await db.Settings.AsNoTracking().FirstAsync();
+        var overdueBefore = DateTime.Now.AddMinutes(-settings.OverdueMinutes);
+        var overdue = await allTime.CountAsync(o => (o.Status == OrderStatus.New || o.Status == OrderStatus.Assembling) && o.CreatedAt < overdueBefore);
 
         var completed = cur.Where(o => o.Status == OrderStatus.Completed).ToList();
 
@@ -65,6 +91,14 @@ public class DashboardController(AppDbContext db, OrderWorkflow workflow) : Cont
                 current = OrderCounts(cur),
                 previous = OrderCounts(prev),
             },
+            sales = new
+            {
+                current = Sales(cur),
+                previous = Sales(prev),
+            },
+            balance = new { received, pending, activeOrders = pipeline.Sum(p => p.count), overdue },
+            // Live order queue by status, for the delivery-control strip.
+            pipeline = OrderFlow.Active.Select(st => new { status = st, count = pipeline.FirstOrDefault(p => p.status == st)?.count ?? 0 }),
             customers = new
             {
                 current = CustomerStats(cur, start, firstOrderAt),
@@ -87,13 +121,6 @@ public class DashboardController(AppDbContext db, OrderWorkflow workflow) : Cont
                     cancelled = inBucket.Count(o => o.Status == OrderStatus.Cancelled),
                 };
             }),
-            byPlatform = Enum.GetValues<Platform>().Select(p => new
-            {
-                platform = p,
-                orders = cur.Count(o => o.Platform == p),
-                revenue = completed.Where(o => o.Platform == p).Sum(o => o.Total),
-            }),
-            trafficSources = visits.OrderByDescending(v => v.Users),
             topProducts = completed.SelectMany(o => o.Items)
                 .GroupBy(i => i.ProductName)
                 .Select(g => new { name = g.Key, quantity = g.Sum(i => i.Quantity), revenue = g.Sum(i => i.Price * i.Quantity) })
@@ -119,6 +146,13 @@ public class DashboardController(AppDbContext db, OrderWorkflow workflow) : Cont
         var cost = done.Sum(o => o.CostTotal);
         var delivery = done.Sum(o => o.DeliveryCost);
         return new { revenue, cost, delivery, profit = revenue - cost - delivery };
+    }
+
+    static object Sales(List<Order> orders)
+    {
+        var done = orders.Where(o => o.Status == OrderStatus.Completed).ToList();
+        var units = done.Sum(o => o.Items.Sum(i => i.Quantity));
+        return new { units, orders = done.Count, perOrder = done.Count == 0 ? 0 : Math.Round((double)units / done.Count, 1) };
     }
 
     static object OrderCounts(List<Order> orders) => new

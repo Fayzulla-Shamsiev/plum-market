@@ -9,12 +9,13 @@ const props = defineProps<{
   title: string
   icon: string
   value: string
-  current: number
-  previous: number
+  /** Omit both to hide the "vs previous period" delta (e.g. all-time figures). */
+  current?: number
+  previous?: number
   lines: KpiLine[]
 }>()
 
-const change = computed(() => delta(props.current, props.previous))
+const change = computed(() => (props.current === undefined || props.previous === undefined ? null : delta(props.current, props.previous)))
 </script>
 
 <template>

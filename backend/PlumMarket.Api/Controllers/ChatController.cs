@@ -130,32 +130,6 @@ public class ChatController(AppDbContext db, ChatService chat) : ControllerBase
         return Ok(new { conv.Id });
     }
 
-    /// <summary>Demo helper: an incoming message from a random customer, as a channel webhook would deliver.</summary>
-    [HttpPost("simulate")]
-    public async Task<IActionResult> Simulate()
-    {
-        string[] texts = ["Здравствуйте! Можно сделать заказ на завтра к 8 утра?", "Salom! Bugun yetkazib berish bormi?",
-            "Какой у вас самый популярный торт?", "Hi, is the cheesecake available today?", "Оплатил через Click, пришёл ли платёж?",
-            "Можно забрать заказ самовывозом из Юнусабада?"];
-        var rnd = Random.Shared;
-        var customers = await db.Customers.OrderBy(c => c.Id).ToListAsync();
-        var customer = customers[rnd.Next(customers.Count)];
-        var conv = await db.Conversations.Include(c => c.Customer)
-            .FirstOrDefaultAsync(c => c.CustomerId == customer.Id && c.ReviewId == null);
-        if (conv is null)
-        {
-            conv = new Conversation
-            {
-                Customer = customer, Channel = ChatService.ChannelFor(customer.Platform), DisplayName = customer.FullName,
-                Handle = customer.Username is null ? null : "@" + customer.Username, CreatedAt = DateTime.Now,
-            };
-            db.Conversations.Add(conv);
-            await db.SaveChangesAsync();
-        }
-        await chat.ReceiveAsync(conv, texts[rnd.Next(texts.Length)]);
-        return Ok(new { conv.Id, conv.DisplayName });
-    }
-
     [HttpGet("unread")]
     public async Task<IActionResult> Unread() => Ok(new { count = await db.Conversations.CountAsync(c => c.UnreadCount > 0) });
 

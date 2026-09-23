@@ -30,6 +30,12 @@ function go(i: number) {
 const pause = () => clearInterval(timer)
 onBeforeUnmount(pause)
 const external = (link: string | null) => !!link && /^https?:/.test(link)
+
+// Nothing to show yet: a brand-new store before its first category or product.
+const empty = computed(() => {
+  const h = home.value
+  return !!h && !h.banners.length && !h.categories.length && !h.popular.length && !h.deals.length && !h.sections.length
+})
 </script>
 
 <template>
@@ -38,6 +44,13 @@ const external = (link: string | null) => !!link && /^https?:/.test(link)
       <div class="big">⚠️</div>
       <h3>{{ t('error') }}</h3>
       <button class="s-btn ghost" @click="load">{{ t('retry') }}</button>
+    </div>
+
+    <!-- A shop whose administrator has not added anything yet. -->
+    <div v-else-if="home && empty" class="s-empty">
+      <div class="big">🛍️</div>
+      <h3>{{ t('storeEmpty') }}</h3>
+      <p>{{ t('storeEmptyHint') }}</p>
     </div>
 
     <template v-else-if="home">
@@ -62,7 +75,7 @@ const external = (link: string | null) => !!link && /^https?:/.test(link)
       </section>
 
       <!-- Category tiles -->
-      <section class="s-section">
+      <section v-if="home.categories.length" class="s-section">
         <div class="s-section-head"><h2>{{ t('categories') }}</h2></div>
         <div class="tiles">
           <RouterLink v-for="c in home.categories" :key="c.id" :to="`/catalog/${c.id}`" class="tile" :style="{ background: tintFor(c.id) }">
@@ -81,7 +94,7 @@ const external = (link: string | null) => !!link && /^https?:/.test(link)
         <ProductRail :items="home.deals" />
       </section>
 
-      <section class="s-section">
+      <section v-if="home.popular.length" class="s-section">
         <div class="s-section-head">
           <h2>{{ t('popular') }}</h2>
           <RouterLink to="/catalog?sort=popular" class="more">{{ t('seeAll') }} <SIcon name="chevronRight" :size="16" /></RouterLink>

@@ -2,7 +2,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import DashboardView from './views/DashboardView.vue'
 import OrdersView from './views/OrdersView.vue'
 import CustomersView from './views/CustomersView.vue'
-import ComingSoonView from './views/ComingSoonView.vue'
+import { admin, adminToken, restore } from './auth'
+import { openStore, storeSlug } from './shop/state/store'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -13,6 +14,14 @@ export const router = createRouter({
     return { top: 0 }
   },
   routes: [
+    // ---- Вход и регистрация администратора ----
+    { path: '/login', component: () => import('./views/auth/AuthView.vue'), props: { mode: 'login' }, meta: { open: true } },
+    { path: '/register', component: () => import('./views/auth/AuthView.vue'), props: { mode: 'register' }, meta: { open: true } },
+
+    // ---- Which storefront is open (one installation, many shops) ----
+    { path: '/shops', component: () => import('./shop/views/StoresView.vue'), meta: { open: true } },
+    { path: '/shop/:slug', redirect: to => { openStore(String(to.params.slug)); return '/' } },
+
     // ---- Customer storefront ----
     {
       path: '/',
@@ -53,22 +62,29 @@ export const router = createRouter({
     { path: '/products/items/new', component: () => import('./views/catalog/ProductFormView.vue') },
     { path: '/products/items/:id(\\d+)', component: () => import('./views/catalog/ProductFormView.vue'), props: true },
     { path: '/products/discounts', component: () => import('./views/catalog/DiscountsView.vue') },
-    { path: '/products/ikpu', component: () => import('./views/catalog/IkpuView.vue') },
     { path: '/products/stock', component: () => import('./views/catalog/StockView.vue') },
 
-    { path: '/marketing', redirect: '/marketing/broadcasts' },
-    { path: '/marketing/broadcasts', component: () => import('./views/marketing/BroadcastsView.vue') },
-    { path: '/marketing/broadcasts/new', component: () => import('./views/marketing/BroadcastNewView.vue') },
+    { path: '/marketing', redirect: '/marketing/promocodes' },
     { path: '/marketing/promocodes', component: () => import('./views/marketing/PromoCodesView.vue') },
-    { path: '/marketing/sources', component: () => import('./views/marketing/SourcesView.vue') },
-    { path: '/marketing/sms', component: () => import('./views/marketing/SmsView.vue') },
-    { path: '/marketing/channel-post', component: () => import('./views/marketing/ChannelPostView.vue') },
     { path: '/marketing/banners', component: () => import('./views/marketing/BannersView.vue') },
     { path: '/marketing/banners/new', component: () => import('./views/marketing/BannerFormView.vue') },
     { path: '/marketing/banners/:id(\\d+)', component: () => import('./views/marketing/BannerFormView.vue'), props: true },
     { path: '/marketing/reviews', component: () => import('./views/marketing/ReviewsView.vue') },
 
-    // Everything else from the spec is stubbed until the next iterations.
-    { path: '/:section(.*)', component: ComingSoonView },
+    { path: '/store', component: () => import('./views/StoreView.vue') },
+
+    // Unknown paths (e.g. removed admin sections) go to the storefront home.
+    { path: '/:section(.*)', redirect: '/' },
   ],
+})
+
+// The storefront needs a shop to show; the admin panel needs a signed-in administrator (spec: "каждый
+// администратор видит и управляет только своим магазином").
+router.beforeEach(async to => {
+  if (to.matched[0]?.meta.shop) return storeSlug.value ? true : { path: '/shops', query: { next: to.fullPath } }
+  if (to.meta.open) return to.path === '/shops' || !adminToken.value ? true : '/dashboard'
+  if (!adminToken.value) return { path: '/login', query: { next: to.fullPath } }
+  // After a reload only the token is known: fetch the administrator before showing the panel.
+  if (!admin.value && !(await restore())) return { path: '/login', query: { next: to.fullPath } }
+  return true
 })

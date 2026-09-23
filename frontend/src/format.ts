@@ -42,24 +42,38 @@ export const toIsoDate = (d: Date) =>
 
 export const statusLabel: Record<OrderStatus, string> = {
   New: 'Новый',
-  InProgress: 'В процессе',
-  Overdue: 'Просрочен',
-  Ready: 'Готов',
+  Assembling: 'В сборке',
+  Ready: 'Готов к отправке',
+  HandedToCourier: 'Передан в доставку',
   OnTheWay: 'В пути',
-  Completed: 'Выполнен',
+  Delivered: 'Доставлен',
+  Completed: 'Завершён',
   Cancelled: 'Отменён',
 }
 
-/** Allowed next steps in the order workflow, in the order they're offered. */
-export const nextStatuses: Record<OrderStatus, OrderStatus[]> = {
-  New: ['InProgress', 'Cancelled'],
-  InProgress: ['Ready', 'Cancelled'],
-  Overdue: ['InProgress', 'Ready', 'Cancelled'],
-  Ready: ['OnTheWay', 'Completed', 'Cancelled'],
-  OnTheWay: ['Completed', 'Cancelled'],
-  Completed: [],
-  Cancelled: ['New'],
+/** Label that depends on how the order is received (pickup orders are "Готов к выдаче"). */
+export function statusText(s: OrderStatus, d: DeliveryType) {
+  return s === 'Ready' && d === 'Pickup' ? 'Готов к выдаче' : statusLabel[s]
 }
+
+/** Verb for the button that moves an order to this status. */
+export const stepAction: Record<OrderStatus, string> = {
+  New: 'Новый',
+  Assembling: 'Принять в сборку',
+  Ready: 'Готов',
+  HandedToCourier: 'Передать курьеру',
+  OnTheWay: 'Курьер выехал',
+  Delivered: 'Доставлен',
+  Completed: 'Подтвердить завершение',
+  Cancelled: 'Отменить',
+}
+
+/** Button text for moving an order to `next`; a pickup order is completed when the customer collects it. */
+export function stepText(next: OrderStatus, d: DeliveryType) {
+  return next === 'Completed' && d === 'Pickup' ? 'Выдан покупателю' : stepAction[next]
+}
+
+export const statusOrder: OrderStatus[] = ['New', 'Assembling', 'Ready', 'HandedToCourier', 'OnTheWay', 'Delivered', 'Completed', 'Cancelled']
 
 export const paymentLabel: Record<PaymentMethod, string> = {
   Cash: 'Наличные',

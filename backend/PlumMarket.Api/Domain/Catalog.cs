@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace PlumMarket.Api.Domain;
 
 /// <summary>
@@ -26,8 +28,9 @@ public class Localized : Dictionary<string, string>
         : Values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "";
 }
 
-public class Category
+public class Category : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int? ParentId { get; set; }
     public Localized Name { get; set; } = new();
@@ -65,8 +68,9 @@ public class ProductMedia
     public string Type { get; set; } = "image";
 }
 
-public class Product
+public class Product : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int? CategoryId { get; set; }
     public Category? Category { get; set; }
@@ -103,8 +107,9 @@ public class Product
 }
 
 /// <summary>Per-branch availability and stock level of a product.</summary>
-public class StockItem
+public class StockItem : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int ProductId { get; set; }
     public int BranchId { get; set; }
@@ -115,8 +120,9 @@ public class StockItem
 
 public enum DiscountType { Percent, Fixed }
 
-public class Discount
+public class Discount : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public DiscountType Type { get; set; }
@@ -134,8 +140,9 @@ public class Discount
 
 public enum ReviewStatus { New, Answered }
 
-public class Review
+public class Review : IStoreOwned
 {
+    [JsonIgnore] public int StoreId { get; set; }
     public int Id { get; set; }
     public int ProductId { get; set; }
     public int CustomerId { get; set; }

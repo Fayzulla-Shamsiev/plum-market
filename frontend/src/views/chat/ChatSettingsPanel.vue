@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { chatApi, type ChatChannel, type ChatSettings } from '../../api'
+import { chatApi, type ChatSettings } from '../../api'
 import Modal from '../../components/Modal.vue'
-import PlatformIcon from '../../components/PlatformIcon.vue'
 
 const emit = defineEmits<{ close: [] }>()
 const s = ref<ChatSettings | null>(null)
-const channel = ref<ChatChannel>('Instagram')
+// MVP: one channel — the storefront chat.
+const channel = 'Website'
 const saving = ref(false)
 const error = ref('')
-const channels: ChatChannel[] = ['Telegram', 'Instagram', 'Website', 'Wolt']
 
 onMounted(async () => { s.value = await chatApi.settings() })
 
@@ -33,27 +32,14 @@ async function save() {
     <div v-if="!s" class="skeleton" style="height: 300px" />
     <div v-else class="stack">
       <label class="switch opt">
-        <input v-model="s.chatInGroup" type="checkbox" /><span class="track" />
-        <span><b>Чат в группе</b><small>Дублировать переписку с клиентами в Telegram-группу магазина</small></span>
-      </label>
-      <label class="switch opt">
-        <input v-model="s.chatWithBot" type="checkbox" /><span class="track" />
-        <span><b>Чат с ботом</b><small>Клиенты могут писать в Telegram-бота магазина — сообщения попадают сюда</small></span>
-      </label>
-      <label class="switch opt">
         <input v-model="s.autoReplyEnabled" type="checkbox" /><span class="track" />
         <span><b>Автоматический ответ</b><small>Отправляется на первое сообщение клиента (не чаще раза в 6 часов на диалог)</small></span>
       </label>
 
       <div class="field" :class="{ off: !s.autoReplyEnabled }">
-        <span>Текст автоответа для платформы</span>
-        <div class="tabs">
-          <button v-for="c in channels" :key="c" type="button" class="chip" :class="{ active: channel === c }" @click="channel = c">
-            <PlatformIcon :platform="c" show-label />
-          </button>
-        </div>
+        <span>Текст автоответа</span>
         <textarea v-model="s.autoReplies[channel]" class="textarea" rows="4" :disabled="!s.autoReplyEnabled"
-                  :placeholder="`Пусто — автоответ в ${channel} не отправляется`" />
+                  placeholder="Пусто — автоответ не отправляется" />
       </div>
       <div v-if="error" class="error-banner">{{ error }}</div>
     </div>

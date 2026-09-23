@@ -222,16 +222,17 @@ public class CheckoutService(AppDbContext db, MarketingService marketing, OrderW
     }
 
     /// <summary>
-    /// The customer may cancel only while the store hasn't confirmed the order yet ("Новый"; "Просрочен" is the same
-    /// order, just waiting too long). Once the admin moves it to "В сборке", only the store can cancel it.
+    /// Cancels an order for the customer (only while it's still Новый) or the store (until it's delivered), see
+    /// <see cref="OrderFlow"/>. Limited stock goes back to the branch and the promo code use is returned.
     /// </summary>
-    public static readonly OrderStatus[] Cancellable = [OrderStatus.New, OrderStatus.Overdue];
-
-    public async Task<string?> CancelAsync(Order order, string? reason)
+    public async Task<string?> CancelAsync(Order order, string? reason, string by = "Покупатель")
     {
-        if (!Cancellable.Contains(order.Status)) return "Магазин уже принял заказ — для отмены свяжитесь с нами";
-        order.CancelReason = string.IsNullOrWhiteSpace(reason) ? "Отменён покупателем" : reason.Trim()[..Math.Min(reason.Trim().Length, 300)];
-        // Put limited stock back where it was taken from.
+        var allowed = by == "Покупатель" ? OrderFlow.CustomerCanCancel(order.Status) : OrderFlow.StoreCanCancel(order.Status);
+        if (!allowed)
+            return by == "Покупатель" ? "Магазин уже принял заказ — для отмены свяжитесь с нами"
+                : $"Заказ в статусе «{OrderFlow.Label(order.Status, order.DeliveryType)}» уже нельзя отменить";
+        var fallback = by == "Покупатель" ? "Отменён покупателем" : "Отменён магазином";
+        order.CancelReason = string.IsNullOrWhiteSpace(reason) ? fallback : $"{fallback}: {reason.Trim()[..Math.Min(reason.Trim().Length, 300)]}";
         var ids = order.Items.Select(i => i.ProductId).ToList();
         var stock = await db.Stock.Where(s => s.BranchId == order.BranchId && ids.Contains(s.ProductId) && s.Status == StockStatus.Limited).ToListAsync();
         foreach (var i in order.Items)
@@ -242,8 +243,7 @@ public class CheckoutService(AppDbContext db, MarketingService marketing, OrderW
             }
         if (order.PromoCode is { } code && await db.PromoCodes.FirstOrDefaultAsync(p => p.Code == code) is { UsedCount: > 0 } promo)
             promo.UsedCount--;
-        await workflow.ChangeStatusAsync(order, OrderStatus.Cancelled);
-        return null;
+        return await workflow.ChangeStatusAsync(order, OrderStatus.Cancelled, by);
     }
 }
 

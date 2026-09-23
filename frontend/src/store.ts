@@ -43,3 +43,14 @@ export function watchChatUnread() {
   unreadTimer = window.setInterval(tick, 15_000)
 }
 export const refreshChatUnread = () => chatApi.unread().then(r => { chatUnread.value = r.count }).catch(() => {})
+
+// ---- New storefront orders waiting for the store (sidebar badge on "Заказы").
+export const newOrders = ref(0)
+let newOrdersTimer = 0
+export const refreshNewOrders = () =>
+  api.orders({ tab: 'new', pageSize: 5 }).then(r => { newOrders.value = r.counts.new ?? 0 }).catch(() => {})
+export function watchNewOrders() {
+  refreshNewOrders()
+  clearInterval(newOrdersTimer)
+  newOrdersTimer = window.setInterval(refreshNewOrders, 20_000)
+}

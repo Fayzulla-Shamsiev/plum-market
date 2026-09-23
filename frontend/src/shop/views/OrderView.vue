@@ -6,7 +6,7 @@ import CancelDialog from '../components/CancelDialog.vue'
 import ProductImage from '../components/ProductImage.vue'
 import SIcon from '../components/SIcon.vue'
 import { dateTime, lang, price, t } from '../i18n'
-import { stepIndex, steps, statusText, tone } from '../orderStatus'
+import { steps as flowSteps, statusText, tone } from '../orderStatus'
 import { requireLogin, signedIn } from '../state/auth'
 import { openChat } from '../state/chat'
 
@@ -36,7 +36,15 @@ onMounted(() => {
 onBeforeUnmount(() => clearInterval(timer))
 watch(signedIn, s => s && load())
 
-const current = computed(() => (order.value ? stepIndex(order.value.status, order.value.deliveryType) : -1))
+// Progress: this order's steps, each with the time it happened.
+const track = computed(() => {
+  const o = order.value
+  if (!o) return []
+  const list = o.steps?.length ? o.steps : flowSteps(o.deliveryType)
+  const current = list.indexOf(o.status)
+  return list.map((s, i) => ({ status: s, done: i < current, now: i === current, at: o.history?.filter(h => h.status === s).at(-1)?.at }))
+})
+const hm = (iso: string) => new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 </script>
 
 <template>
@@ -68,9 +76,10 @@ const current = computed(() => (order.value ? stepIndex(order.value.status, orde
 
       <!-- Progress -->
       <ol v-if="order.status !== 'Cancelled'" class="track">
-        <li v-for="(s, n) in steps(order.deliveryType)" :key="s" :class="{ done: n < current, now: n === current }">
-          <span class="dot"><SIcon v-if="n < current" name="check" :size="14" /></span>
-          <span class="lbl">{{ statusText(s, order.deliveryType) }}</span>
+        <li v-for="s in track" :key="s.status" :class="{ done: s.done, now: s.now }">
+          <span class="dot"><SIcon v-if="s.done" name="check" :size="14" /></span>
+          <span class="lbl">{{ statusText(s.status, order.deliveryType) }}</span>
+          <span v-if="s.at && (s.done || s.now)" class="at">{{ hm(s.at) }}</span>
         </li>
       </ol>
       <p v-else class="cancelled">{{ order.cancelReason ?? t('st_Cancelled') }} · {{ dateTime(order.statusChangedAt) }}</p>
@@ -158,6 +167,7 @@ h1 { font-size: 28px; letter-spacing: -0.025em; margin: 0; }
 .done .dot { background: var(--blue); }
 .now .dot { background: var(--card); border: 3px solid var(--blue); box-shadow: 0 0 0 4px var(--blue-50); }
 .now .lbl { color: var(--ink); font-weight: 650; }
+.at { font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; margin-top: -4px; }
 .done .lbl { color: var(--ink-2); }
 .cancelled { margin: 16px 0; padding: 12px 16px; background: var(--card); border-radius: 14px; color: var(--ink-2); }
 .grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 14px; align-items: start; }

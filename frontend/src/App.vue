@@ -1,51 +1,42 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Icon from './components/Icon.vue'
-import { chatUnread, useLookups, watchChatUnread } from './store'
+import { admin, logout } from './auth'
+import { chatUnread, newOrders, useLookups, watchChatUnread, watchNewOrders } from './store'
 
 interface Section { path: string; label: string; icon: string; ready?: boolean; children?: { path: string; label: string }[] }
 
-// Full section list from the spec; the rest are placeholders until their iteration.
+// MVP admin (spec "Административная часть"): orders and their flow, catalog, customers, dashboard, plus what the
+// storefront needs from the store (chat, promo codes, banners, reviews, store info/branches).
 const sections: Section[] = [
   { path: '/dashboard', label: 'Дашборд', icon: 'dashboard', ready: true },
   { path: '/orders', label: 'Заказы', icon: 'orders', ready: true },
   { path: '/customers', label: 'Клиенты', icon: 'customers', ready: true },
   { path: '/chat', label: 'Чат', icon: 'chat', ready: true },
   {
-    path: '/products', label: 'Продукты', icon: 'products', ready: true,
+    path: '/products', label: 'Каталог', icon: 'products', ready: true,
     children: [
       { path: '/products/categories', label: 'Категории' },
-      { path: '/products/items', label: 'Продукты' },
-      { path: '/products/discounts', label: 'Скидка' },
-      { path: '/products/ikpu', label: 'ИКПУ' },
+      { path: '/products/items', label: 'Товары' },
+      { path: '/products/discounts', label: 'Скидки' },
       { path: '/products/stock', label: 'Склад' },
     ],
   },
   {
     path: '/marketing', label: 'Маркетинг', icon: 'marketing', ready: true,
     children: [
-      { path: '/marketing/broadcasts', label: 'Рассылка' },
-      { path: '/marketing/promocodes', label: 'Промокод' },
-      { path: '/marketing/sources', label: 'Источники' },
-      { path: '/marketing/sms', label: 'СМС-рассылка' },
-      { path: '/marketing/channel-post', label: 'Пост для канала' },
-      { path: '/marketing/banners', label: 'Баннер' },
-      { path: '/marketing/reviews', label: 'Обзоры' },
+      { path: '/marketing/promocodes', label: 'Промокоды' },
+      { path: '/marketing/banners', label: 'Баннеры' },
+      { path: '/marketing/reviews', label: 'Отзывы' },
     ],
   },
-  { path: '/platforms', label: 'Платформы', icon: 'platforms' },
-  { path: '/payment', label: 'Способ оплаты', icon: 'payment' },
-  { path: '/delivery', label: 'Доставка', icon: 'delivery' },
-  { path: '/branches', label: 'Филиалы', icon: 'branches' },
-  { path: '/staff', label: 'Сотрудники', icon: 'staff' },
-  { path: '/tariff', label: 'Тарифный план', icon: 'tariff' },
-  { path: '/extensions', label: 'Расширения (Plum)', icon: 'extensions' },
-  { path: '/settings', label: 'Настройки', icon: 'settings' },
+  { path: '/store', label: 'Магазин', icon: 'branches', ready: true },
 ]
 
 const { lookups } = useLookups()
 const route = useRoute()
+const router = useRouter()
 const menuOpen = ref(false)
 // Per the spec, clicking a group ("Продукты", "Маркетинг") only expands its sub-menu; the page doesn't change.
 const currentGroup = computed(() => sections.find(s => s.children && route.path.startsWith(s.path))?.path ?? null)
@@ -55,20 +46,31 @@ watch(() => route.fullPath, () => {
   menuOpen.value = false
   if (currentGroup.value) expanded.value = currentGroup.value
 })
-// The unread-chat badge belongs to the admin sidebar, so polling starts on the first admin page only.
+// The storefront and the sign-in pages bring their own layout; only the panel gets the sidebar.
 const isShop = computed(() => !!route.matched[0]?.meta.shop)
-const stopAdminWatch = watch(() => route.matched.length && !isShop.value, admin => {
+const bare = computed(() => isShop.value || !!route.meta.open)
+// The unread-chat badge belongs to the admin sidebar, so polling starts on the first admin page only.
+const stopAdminWatch = watch(() => route.matched.length && !bare.value, admin => {
   if (!admin) return
   watchChatUnread()
+  watchNewOrders()
   queueMicrotask(() => stopAdminWatch())
 }, { immediate: true })
 
 const toggle = (path: string) => (expanded.value = expanded.value === path ? null : path)
+
+// The storefront of this administrator's own store.
+const storefront = computed(() => (admin.value ? `/shop/${admin.value.store.slug}` : '/shops'))
+
+async function signOut() {
+  await logout()
+  router.replace('/login')
+}
 </script>
 
 <template>
-  <!-- The storefront has its own layout (ShopLayout); everything else is the merchant admin. -->
-  <RouterView v-if="isShop" />
+  <!-- The storefront (ShopLayout) and the sign-in pages stand alone; everything else is the merchant admin. -->
+  <RouterView v-if="bare" />
   <div v-else class="shell">
     <aside class="sidebar" :class="{ open: menuOpen }">
       <div class="brand">
@@ -79,7 +81,7 @@ const toggle = (path: string) => (expanded.value = expanded.value === path ? nul
         </svg>
         <div>
           <div class="brand-name">Plum Market</div>
-          <div class="brand-store">{{ lookups?.store.storeName ?? '…' }}</div>
+          <div class="brand-store">{{ admin?.store.name ?? lookups?.store.storeName ?? '…' }}</div>
         </div>
       </div>
       <nav>
@@ -98,13 +100,23 @@ const toggle = (path: string) => (expanded.value = expanded.value === path ? nul
             <Icon :name="s.icon" />
             <span>{{ s.label }}</span>
             <span v-if="s.path === '/chat' && chatUnread" class="badge-count">{{ chatUnread }}</span>
+            <span v-if="s.path === '/orders' && newOrders" class="badge-count new" title="Новые заказы">{{ newOrders }}</span>
             <small v-if="!s.ready">скоро</small>
           </RouterLink>
         </template>
       </nav>
-      <div class="sidebar-foot faint">
-        <RouterLink to="/" class="shop-link">Открыть магазин ↗</RouterLink>
-        Прототип · v0.4
+      <div class="sidebar-foot">
+        <RouterLink :to="storefront" class="shop-link">Открыть магазин ↗</RouterLink>
+        <div class="account">
+          <span class="who">
+            <b>{{ admin?.name }}</b>
+            <small>{{ admin?.phone }}</small>
+          </span>
+          <button class="logout" title="Выйти" @click="signOut">
+            <Icon name="logout" />
+          </button>
+        </div>
+        <span class="faint">Прототип · MVP</span>
       </div>
     </aside>
     <div v-if="menuOpen" class="scrim" @click="menuOpen = false" />
@@ -143,9 +155,17 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .sub-item { padding: 6px 10px; border-radius: 7px; color: #cdb8dc; font-size: 13.5px; }
 .sub-item:hover { background: rgb(255 255 255 / 8%); color: #fff; text-decoration: none; }
 .sub-item.router-link-active { background: var(--plum-600); color: #fff; }
+.badge-count.new { background: #1fae66; }
 .badge-count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #e34948; color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
-.shop-link { display: block; color: #dccbe8; font-weight: 600; margin-bottom: 6px; }
-.sidebar-foot { margin-top: auto; padding: 16px 10px 0; font-size: 12px; color: #85709a; }
+.shop-link { display: block; color: #dccbe8; font-weight: 600; }
+.sidebar-foot { margin-top: auto; padding: 16px 10px 0; font-size: 12px; color: #85709a; display: flex; flex-direction: column; gap: 10px; }
+.account { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid rgb(255 255 255 / 12%); }
+.who { display: flex; flex-direction: column; min-width: 0; }
+.who b { color: #e9ddf1; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who small { color: #9c86ad; font-size: 11.5px; }
+.logout { margin-left: auto; width: 30px; height: 30px; flex: none; display: grid; place-items: center; border: 0; border-radius: 8px; background: rgb(255 255 255 / 8%); color: #dccbe8; cursor: pointer; }
+.logout:hover { background: rgb(255 255 255 / 16%); color: #fff; }
+.logout svg { width: 16px; height: 16px; }
 .main { flex: 1; min-width: 0; position: relative; }
 .mobile-menu { display: none; }
 .scrim { display: none; }

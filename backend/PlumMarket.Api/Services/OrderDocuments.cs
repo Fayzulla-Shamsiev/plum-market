@@ -15,8 +15,8 @@ public static class OrderDocuments
     {
         using var wb = new XLWorkbook();
         var ws = wb.AddWorksheet("Заказы");
-        string[] headers = ["ID", "Дата", "Клиент", "Телефон", "Статус", "Платформа", "Оплата", "Тип доставки",
-            "Филиал", "Сотрудник", "Адрес", "Товары", "Сумма товаров", "Доставка", "Итого", "Себестоимость"];
+        string[] headers = ["ID", "Дата", "Клиент", "Телефон", "Статус", "Получатель", "Промокод", "Тип доставки",
+            "Филиал", "Комментарий", "Адрес", "Товары", "Сумма товаров", "Доставка", "Итого", "Себестоимость"];
         for (var i = 0; i < headers.Length; i++) ws.Cell(1, i + 1).Value = headers[i];
 
         var row = 2;
@@ -27,12 +27,12 @@ public static class OrderDocuments
             ws.Cell(row, 2).Style.DateFormat.Format = DateFmt;
             ws.Cell(row, 3).Value = o.Customer.FullName;
             ws.Cell(row, 4).Value = o.Customer.Phone;
-            ws.Cell(row, 5).Value = Labels.Status(o.Status);
-            ws.Cell(row, 6).Value = Labels.Platform(o.Platform);
-            ws.Cell(row, 7).Value = Labels.Payment(o.PaymentMethod);
+            ws.Cell(row, 5).Value = Labels.Status(o.Status, o.DeliveryType);
+            ws.Cell(row, 6).Value = o.RecipientName is null ? "" : $"{o.RecipientName}, {o.RecipientPhone}";
+            ws.Cell(row, 7).Value = o.PromoCode ?? "";
             ws.Cell(row, 8).Value = Labels.Delivery(o.DeliveryType);
             ws.Cell(row, 9).Value = o.Branch.Name;
-            ws.Cell(row, 10).Value = o.Employee?.Name ?? "";
+            ws.Cell(row, 10).Value = o.Comment ?? "";
             ws.Cell(row, 11).Value = o.Address ?? "";
             ws.Cell(row, 12).Value = string.Join("; ", o.Items.Select(i => $"{i.ProductName} × {i.Quantity}"));
             ws.Cell(row, 13).Value = o.Subtotal;
@@ -161,9 +161,9 @@ public static class OrderDocuments
                     c.Item().Row(r =>
                     {
                         r.RelativeItem().Text($"#{o.Id} · {o.CreatedAt.ToString(DateFmt)}").Bold().FontSize(11);
-                        r.AutoItem().Text($"{Labels.Delivery(o.DeliveryType)} · {Labels.Payment(o.PaymentMethod)} · {Labels.Status(o.Status)}");
+                        r.AutoItem().Text($"{Labels.Delivery(o.DeliveryType)} · {Labels.Status(o.Status, o.DeliveryType)}");
                     });
-                    c.Item().Text($"{o.Customer.FullName}, {o.Customer.Phone}");
+                    c.Item().Text(o.RecipientName is null ? $"{o.Customer.FullName}, {o.Customer.Phone}" : $"{o.RecipientName}, {o.RecipientPhone}");
                     c.Item().Text(o.DeliveryType == DeliveryType.Delivery ? $"Адрес: {o.Address}" : $"Самовывоз: филиал {o.Branch.Name}")
                         .FontColor(Colors.Grey.Darken2);
                     if (!string.IsNullOrEmpty(o.Comment)) c.Item().Text($"Комментарий: {o.Comment}").Italic();

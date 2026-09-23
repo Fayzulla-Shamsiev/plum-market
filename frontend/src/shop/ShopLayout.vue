@@ -126,10 +126,12 @@ onBeforeUnmount(() => { document.title = adminTitle })
       <div class="s-wrap foot-grid">
         <div>
           <b>{{ meta?.store.name }}</b>
-          <p>{{ t('catalog') }}: {{ meta?.categories.map(c => c.name).join(' · ') }}</p>
+          <p v-if="meta?.categories.length">{{ t('catalog') }}: {{ meta.categories.map(c => c.name).join(' · ') }}</p>
         </div>
         <ul>
-          <li v-for="b in meta?.branches ?? []" :key="b.id"><SIcon name="store" :size="15" /> <span><b>{{ b.name }}</b> — {{ b.address }}</span></li>
+          <li v-for="b in meta?.branches ?? []" :key="b.id">
+            <SIcon name="store" :size="15" /> <span><b>{{ b.name }}</b><template v-if="b.address"> — {{ b.address }}</template></span>
+          </li>
         </ul>
         <nav class="foot-links">
           <RouterLink to="/about">{{ t('about') }}</RouterLink>
@@ -139,6 +141,7 @@ onBeforeUnmount(() => { document.title = adminTitle })
         </nav>
         <div class="powered">
           <span>Работает на Plum Market</span>
+          <RouterLink to="/shops">Все магазины →</RouterLink>
           <RouterLink to="/dashboard">Кабинет продавца →</RouterLink>
         </div>
       </div>

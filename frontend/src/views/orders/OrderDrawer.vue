@@ -1,29 +1,30 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { api, type OrderDetail, type OrderStatus } from '../../api'
+import { computed, ref, watch } from 'vue'
+import { api, type OrderDetail } from '../../api'
 import Modal from '../../components/Modal.vue'
-import PlatformIcon from '../../components/PlatformIcon.vue'
-import { count, dateTime, deliveryLabel, languageLabel, money, nextStatuses, paymentLabel, statusLabel } from '../../format'
-import { useLookups } from '../../store'
+import { count, dateTime, deliveryLabel, languageLabel, money, statusText, stepText } from '../../format'
 
+// Order card for the store: where the order is in the flow (with times), the one next step, and cancellation.
 const props = defineProps<{ id: number }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
-const { lookups } = useLookups()
 
 const order = ref<OrderDetail | null>(null)
 const busy = ref(false)
 const error = ref('')
+const cancelling = ref(false)
+const reason = ref('')
 
 watch(() => props.id, async id => {
   order.value = null
+  cancelling.value = false
   order.value = await api.order(id)
 }, { immediate: true })
 
-async function setStatus(s: OrderStatus) {
+async function run(fn: () => Promise<OrderDetail>) {
   busy.value = true
   error.value = ''
   try {
-    order.value = await api.setStatus(props.id, s)
+    order.value = await fn()
     emit('changed')
   } catch (e) {
     error.value = (e as Error).message
@@ -31,47 +32,67 @@ async function setStatus(s: OrderStatus) {
     busy.value = false
   }
 }
-
-async function setEmployee(ev: Event) {
-  const v = (ev.target as HTMLSelectElement).value
-  order.value = await api.setEmployee(props.id, v ? Number(v) : null)
-  emit('changed')
+const advance = () => order.value?.next && run(() => api.setStatus(props.id, order.value!.next!))
+async function cancel() {
+  await run(() => api.setStatus(props.id, 'Cancelled', reason.value.trim() || undefined))
+  cancelling.value = false
+  reason.value = ''
 }
+
+// Timeline: every step of this order's flow, with the time it happened (if it did).
+const timeline = computed(() => {
+  const o = order.value
+  if (!o) return []
+  const at = (s: string) => o.history.filter(h => h.status === s).at(-1)
+  const steps = o.status === 'Cancelled' ? [...o.history.map(h => h.status)] : o.steps
+  const current = steps.indexOf(o.status)
+  return steps.map((s, i) => ({ status: s, done: i <= current, now: i === current, entry: at(s) }))
+})
 </script>
 
 <template>
-  <Modal :title="`Заказ #${id}`" side width="480px" @close="emit('close')">
+  <Modal :title="`Заказ #${id}`" side width="500px" @close="emit('close')">
     <template #head>
-      <span v-if="order" class="badge" :class="order.status">{{ statusLabel[order.status] }}</span>
+      <span v-if="order" class="badge" :class="order.status">{{ statusText(order.status, order.deliveryType) }}</span>
+      <span v-if="order?.overdue" class="badge Overdue">просрочен</span>
     </template>
 
     <div v-if="!order" class="skeleton" style="height: 400px" />
     <div v-else class="stack">
       <div v-if="error" class="error-banner">{{ error }}</div>
 
-      <section v-if="nextStatuses[order.status].length" class="actions">
-        <span class="label">Сменить статус</span>
-        <div class="row">
-          <button v-for="s in nextStatuses[order.status]" :key="s" class="btn btn-sm"
-                  :class="s === 'Cancelled' ? 'btn-danger' : 'btn-primary'" :disabled="busy" @click="setStatus(s)">
-            {{ statusLabel[s] }}
+      <!-- Delivery control -->
+      <section class="flow">
+        <ol class="steps">
+          <li v-for="t in timeline" :key="t.status" :class="{ done: t.done, now: t.now, cancelled: t.status === 'Cancelled' }">
+            <span class="dot" />
+            <span class="st">{{ statusText(t.status, order.deliveryType) }}</span>
+            <span v-if="t.entry" class="when">{{ dateTime(t.entry.at) }} · {{ t.entry.by }}</span>
+          </li>
+        </ol>
+        <div v-if="order.next || order.canCancel" class="actions">
+          <button v-if="order.next" class="btn btn-primary" :class="{ final: order.next === 'Completed' }" :disabled="busy" @click="advance">
+            {{ stepText(order.next, order.deliveryType) }} →
           </button>
+          <button v-if="order.canCancel && !cancelling" class="btn btn-ghost danger" :disabled="busy" @click="cancelling = true">Отменить заказ</button>
         </div>
+        <div v-if="cancelling" class="cancel-box">
+          <label class="field"><span>Причина отмены (увидит покупатель)</span>
+            <input v-model="reason" class="input" maxlength="300" placeholder="Например: нет в наличии" />
+          </label>
+          <div class="row">
+            <button class="btn btn-danger btn-sm" :disabled="busy" @click="cancel">Отменить заказ</button>
+            <button class="btn btn-ghost btn-sm" @click="cancelling = false">Не отменять</button>
+          </div>
+        </div>
+        <p v-if="order.status === 'New'" class="faint small note">Пока заказ «Новый», покупатель может отменить его сам. После «Принять в сборку» — только магазин.</p>
       </section>
 
       <section class="kv">
         <div><span>Создан</span><b class="num">{{ dateTime(order.createdAt) }}</b></div>
-        <div><span>Платформа</span><PlatformIcon :platform="order.platform" show-label /></div>
-        <div><span>Оплата</span><b>{{ paymentLabel[order.paymentMethod] }}</b></div>
         <div><span>Получение</span><b>{{ deliveryLabel[order.deliveryType] }}</b></div>
         <div><span>Филиал</span><b>{{ order.branch.name }}</b></div>
-        <div>
-          <span>Сотрудник</span>
-          <select class="select sm" :value="order.employee?.id ?? ''" @change="setEmployee">
-            <option value="">Не назначен</option>
-            <option v-for="e in lookups?.employees" :key="e.id" :value="e.id">{{ e.name }} · {{ e.role }}</option>
-          </select>
-        </div>
+        <div><span>Оплата</span><b>Наличными при получении</b></div>
       </section>
 
       <section class="box">
@@ -79,7 +100,7 @@ async function setEmployee(ev: Event) {
         <div class="row" style="justify-content: space-between">
           <div>
             <b>{{ order.customer.fullName }}</b>
-            <div class="muted num">{{ order.customer.phone }}<span v-if="order.customer.username"> · @{{ order.customer.username }}</span></div>
+            <div class="muted num">{{ order.customer.phone }}<span v-if="order.customer.email"> · {{ order.customer.email }}</span></div>
           </div>
           <div class="right small">
             <div class="faint">Бонусы</div>
@@ -113,14 +134,14 @@ async function setEmployee(ev: Event) {
       </section>
 
       <section class="box">
-        <h3>Уведомления клиенту <span class="faint small">(автоответчик)</span></h3>
+        <h3>Сообщения покупателю <span class="faint small">(приходят в его чат с магазином)</span></h3>
         <ul v-if="order.notifications.length" class="notes">
           <li v-for="n in order.notifications" :key="n.id">
             <div class="bubble">{{ n.text }}</div>
-            <div class="faint small">{{ dateTime(n.sentAt) }} · {{ n.channel }} · {{ languageLabel[n.language] ?? n.language }}</div>
+            <div class="faint small">{{ dateTime(n.sentAt) }} · {{ languageLabel[n.language] ?? n.language }}</div>
           </li>
         </ul>
-        <p v-else class="faint small">Пока нет. Уведомление уйдёт при смене статуса.</p>
+        <p v-else class="faint small">Пока нет. Сообщение уйдёт при смене статуса (если покупатель не отключил их в настройках).</p>
       </section>
     </div>
   </Modal>
@@ -128,8 +149,25 @@ async function setEmployee(ev: Event) {
 
 <style scoped>
 .stack { display: flex; flex-direction: column; gap: 16px; }
-.label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
-.actions { padding: 12px; background: var(--plum-50); border-radius: 10px; }
+.flow { padding: 14px; background: var(--plum-50); border-radius: 12px; display: flex; flex-direction: column; gap: 12px; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; }
+.steps li { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px; padding: 5px 0; position: relative; color: var(--text-3); }
+.steps li::before { content: ''; position: absolute; left: 6px; top: -9px; height: 18px; width: 2px; background: var(--border-strong); }
+.steps li:first-child::before { display: none; }
+.steps li.done::before { background: var(--plum-500); }
+.dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong); background: var(--surface); z-index: 1; }
+.done .dot { background: var(--plum-600); border-color: var(--plum-600); }
+.now .dot { box-shadow: 0 0 0 4px rgb(131 64 168 / 20%); }
+.done .st { color: var(--text); }
+.now .st { font-weight: 700; }
+.cancelled .dot { background: var(--bad); border-color: var(--bad); }
+.cancelled .st { color: var(--bad); }
+.when { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions .final { background: var(--good); border-color: var(--good); }
+.danger { color: var(--bad); }
+.cancel-box { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--surface); border-radius: 10px; border: 1px solid #f1b7b7; }
+.note { margin: 0; }
 .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
 .kv > div { display: flex; flex-direction: column; gap: 2px; }
 .kv span:first-child { font-size: 12px; color: var(--text-3); }

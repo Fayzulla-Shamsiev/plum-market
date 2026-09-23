@@ -8,34 +8,48 @@ namespace PlumMarket.Api.Controllers;
 
 [ApiController]
 [Route("api/orders")]
-public class OrdersController(AppDbContext db, OrderWorkflow workflow) : ControllerBase
+public class OrdersController(AppDbContext db, OrderWorkflow workflow, CheckoutService checkout) : ControllerBase
 {
     const string XlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] OrderFilter filter, int page = 1, int pageSize = 20)
     {
-        await workflow.SweepOverdueAsync();
-        pageSize = Math.Clamp(pageSize, 5, 100);
+        pageSize = Math.Clamp(pageSize, 5, 200);
+        var settings = await db.Settings.AsNoTracking().FirstAsync();
+        var now = DateTime.Now;
+        filter.OverdueBefore = now.AddMinutes(-settings.OverdueMinutes);
 
         var baseQuery = await filter.ApplyAsync(db.Orders.AsNoTracking(), db);
         var byStatus = await baseQuery.GroupBy(o => o.Status).Select(g => new { g.Key, Count = g.Count() }).ToListAsync();
         var counts = OrderFilter.Tabs.ToDictionary(t => t.Key,
             t => byStatus.Where(s => t.Value.Contains(s.Key)).Sum(s => s.Count));
+        counts["overdue"] = await filter.Overdue(baseQuery).CountAsync();
 
         var q = filter.ApplyTab(baseQuery);
         var total = await q.CountAsync();
-        var items = await q.OrderByDescending(o => o.CreatedAt)
+        var rows = await q.OrderByDescending(o => o.CreatedAt)
             .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(o => new
             {
-                o.Id, o.CreatedAt, o.Status, o.Platform, o.PaymentMethod, o.DeliveryType, o.Total,
+                o.Id, o.CreatedAt, o.StatusChangedAt, o.Status, o.DeliveryType, o.Total, o.Address, o.RecipientName, o.RecipientPhone,
                 Customer = new { o.Customer.Id, o.Customer.FullName, o.Customer.Phone },
                 Branch = o.Branch.Name,
-                Employee = o.Employee != null ? o.Employee.Name : null,
                 ItemsCount = o.Items.Sum(i => i.Quantity),
             })
             .ToListAsync();
+        var items = rows.Select(o =>
+        {
+            var probe = new Order { Status = o.Status, DeliveryType = o.DeliveryType, CreatedAt = o.CreatedAt };
+            return new
+            {
+                o.Id, o.CreatedAt, o.StatusChangedAt, o.Status, o.DeliveryType, o.Total, o.Address, o.Customer, o.Branch, o.ItemsCount,
+                recipient = o.RecipientName is null ? null : new { name = o.RecipientName, phone = o.RecipientPhone },
+                next = OrderFlow.Next(probe),
+                canCancel = OrderFlow.StoreCanCancel(o.Status),
+                overdue = OrderFlow.IsOverdue(probe, settings.OverdueMinutes, now),
+            };
+        });
 
         return Ok(new { items, total, page, pageSize, counts });
     }
@@ -44,84 +58,46 @@ public class OrdersController(AppDbContext db, OrderWorkflow workflow) : Control
     public async Task<IActionResult> Get(int id)
     {
         var o = await db.Orders.AsNoTracking()
-            .Include(o => o.Customer).Include(o => o.Branch).Include(o => o.Employee).Include(o => o.Items)
-            .FirstOrDefaultAsync(o => o.Id == id);
+            .Include(o => o.Customer).Include(o => o.Branch).Include(o => o.Items).Include(o => o.History)
+            .AsSplitQuery().FirstOrDefaultAsync(o => o.Id == id);
         if (o is null) return NotFound();
+        var settings = await db.Settings.AsNoTracking().FirstAsync();
         var notifications = await db.Notifications.AsNoTracking().Where(n => n.OrderId == id)
             .OrderByDescending(n => n.SentAt).ToListAsync();
         return Ok(new
         {
-            o.Id, o.CreatedAt, o.StatusChangedAt, o.Status, o.Platform, o.PaymentMethod, o.DeliveryType,
+            o.Id, o.CreatedAt, o.StatusChangedAt, o.Status, o.DeliveryType,
             o.Subtotal, o.DeliveryCost, o.Total, o.CostTotal, o.BonusEarned, o.Address, o.Lat, o.Lng, o.Comment,
             o.RecipientName, o.RecipientPhone, o.PromoCode, o.PromoDiscount, o.CancelReason,
-            Customer = new { o.Customer.Id, o.Customer.FullName, o.Customer.Phone, o.Customer.Username, o.Customer.Language, o.Customer.BonusPoints },
+            Customer = new { o.Customer.Id, o.Customer.FullName, o.Customer.Phone, o.Customer.Email, o.Customer.Language, o.Customer.BonusPoints },
             Branch = new { o.Branch.Id, o.Branch.Name, o.Branch.Address },
-            Employee = o.Employee is null ? null : new { o.Employee.Id, o.Employee.Name },
             Items = o.Items.Select(i => new { i.ProductName, i.Quantity, i.Price, Sum = i.Price * i.Quantity }),
+            // Delivery control: every step with its time and who made it; the remaining steps come from the flow.
+            History = o.History.OrderBy(h => h.At).ThenBy(h => h.Id).Select(h => new { h.Status, h.At, h.By }),
+            Steps = OrderFlow.Steps(o.DeliveryType),
+            Next = OrderFlow.Next(o),
+            CanCancel = OrderFlow.StoreCanCancel(o.Status),
+            Overdue = OrderFlow.IsOverdue(o, settings.OverdueMinutes, DateTime.Now),
             Notifications = notifications,
         });
     }
 
-    public record StatusChange(OrderStatus Status);
+    public record StatusChange(OrderStatus Status, string? Reason);
 
+    /// <summary>Next step or cancel. Anything else is refused with the reason (the flow is strictly sequential).</summary>
     [HttpPatch("{id:int}/status")]
     public async Task<IActionResult> ChangeStatus(int id, StatusChange body)
     {
-        var order = await db.Orders.Include(o => o.Customer).Include(o => o.Branch).FirstOrDefaultAsync(o => o.Id == id);
+        var order = await db.Orders.Include(o => o.Customer).Include(o => o.Branch).Include(o => o.Items).FirstOrDefaultAsync(o => o.Id == id);
         if (order is null) return NotFound();
-        await workflow.ChangeStatusAsync(order, body.Status);
-        return await Get(id);
-    }
-
-    public record EmployeeChange(int? EmployeeId);
-
-    [HttpPatch("{id:int}/employee")]
-    public async Task<IActionResult> AssignEmployee(int id, EmployeeChange body)
-    {
-        var order = await db.Orders.FindAsync(id);
-        if (order is null) return NotFound();
-        if (body.EmployeeId is { } e && !await db.Employees.AnyAsync(x => x.Id == e)) return BadRequest("Unknown employee");
-        order.EmployeeId = body.EmployeeId;
-        await db.SaveChangesAsync();
-        return await Get(id);
-    }
-
-    /// <summary>Demo helper: creates a random incoming order as if it came from the storefront / bot.</summary>
-    [HttpPost("simulate")]
-    public async Task<IActionResult> Simulate()
-    {
-        var rnd = Random.Shared;
-        var customers = await db.Customers.ToListAsync();
-        var customer = customers[rnd.Next(customers.Count)];
-        var branches = await db.Branches.ToListAsync();
-        var branch = branches[rnd.Next(branches.Count)];
-        var products = await db.Products.ToListAsync();
-        var delivery = rnd.NextDouble() < 0.6 ? DeliveryType.Delivery : DeliveryType.Pickup;
-
-        var order = new Order
+        if (body.Status == OrderStatus.Cancelled)
         {
-            Customer = customer, Branch = branch, CreatedAt = DateTime.Now, StatusChangedAt = DateTime.Now,
-            Status = OrderStatus.New, Platform = customer.Platform, DeliveryType = delivery,
-            PaymentMethod = (PaymentMethod)rnd.Next(4),
-        };
-        foreach (var p in products.OrderBy(_ => rnd.Next()).Take(rnd.Next(1, 4)))
-            order.Items.Add(new OrderItem { ProductId = p.Id, ProductName = p.Name.Get(), Price = p.Price, CostPrice = p.CostPrice, Quantity = rnd.Next(1, 3) });
-        order.Subtotal = order.Items.Sum(i => i.Price * i.Quantity);
-        order.CostTotal = order.Items.Sum(i => i.CostPrice * i.Quantity);
-        if (delivery == DeliveryType.Delivery)
-        {
-            order.DeliveryCost = order.Subtotal >= 200_000 ? 0 : 15_000;
-            order.Lat = branch.Lat + (rnd.NextDouble() - 0.5) * 0.08;
-            order.Lng = branch.Lng + (rnd.NextDouble() - 0.5) * 0.1;
-            order.Address = "г. Ташкент, ул. Навои, д. " + rnd.Next(1, 90);
+            // Store cancellations return limited stock and the promo use, same as a customer cancelling.
+            if (await checkout.CancelAsync(order, body.Reason, "Магазин") is { } err) return Conflict(new { error = err });
+            return await Get(id);
         }
-        order.Total = order.Subtotal + order.DeliveryCost;
-        customer.LastVisitAt = DateTime.Now;
-        db.Orders.Add(order);
-        await db.SaveChangesAsync();
-
-        await workflow.OnCreatedAsync(order);
-        return await Get(order.Id);
+        if (await workflow.ChangeStatusAsync(order, body.Status) is { } error) return Conflict(new { error });
+        return await Get(id);
     }
 
     [HttpGet("export")]
@@ -148,7 +124,7 @@ public class OrdersController(AppDbContext db, OrderWorkflow workflow) : Control
     async Task<List<Order>> LoadFull(OrderFilter filter)
     {
         var q = await filter.ApplyAsync(db.Orders.AsNoTracking(), db);
-        return await q.Include(o => o.Customer).Include(o => o.Branch).Include(o => o.Employee).Include(o => o.Items)
+        return await q.Include(o => o.Customer).Include(o => o.Branch).Include(o => o.Items)
             .OrderBy(o => o.CreatedAt).AsSplitQuery().ToListAsync();
     }
 

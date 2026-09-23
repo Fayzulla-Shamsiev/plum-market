@@ -10,8 +10,8 @@ import Icon from '../components/Icon.vue'
 import KpiCard from '../components/KpiCard.vue'
 import OrdersMap from '../components/OrdersMap.vue'
 import PeriodPicker from '../components/PeriodPicker.vue'
-import PlatformIcon from '../components/PlatformIcon.vue'
-import { compactMoney, count, money, platformColor, platformLabel, series } from '../format'
+import SetupChecklist from './SetupChecklist.vue'
+import { compactMoney, count, money, series, statusLabel } from '../format'
 import { periodFor, type Period } from '../period'
 import { useLookups } from '../store'
 
@@ -96,9 +96,7 @@ const dynamicsOptions: ChartOptions<'bar'> = {
   },
 }
 
-const platformMax = computed(() => Math.max(1, ...(data.value?.byPlatform.map(p => p.orders) ?? [1])))
-const sourceMax = computed(() => Math.max(1, ...(data.value?.trafficSources.map(s => s.users) ?? [1])))
-const sourceTotal = computed(() => data.value?.trafficSources.reduce((s, x) => s + x.users, 0) ?? 0)
+const pipelineMax = computed(() => Math.max(1, ...(data.value?.pipeline.map(p => p.count) ?? [1])))
 const productMax = computed(() => Math.max(1, ...(data.value?.topProducts.map(p => p.quantity) ?? [1])))
 </script>
 
@@ -113,15 +111,17 @@ const productMax = computed(() => Math.max(1, ...(data.value?.topProducts.map(p 
       <PeriodPicker v-model="period" />
     </div>
 
+    <SetupChecklist />
+
     <div v-if="error" class="error-banner">Не удалось загрузить данные: {{ error }}</div>
 
     <div v-if="!data" class="grid-kpi">
-      <div v-for="i in 3" :key="i" class="skeleton" style="height: 190px" />
+      <div v-for="i in 5" :key="i" class="skeleton" style="height: 190px" />
     </div>
 
     <template v-else>
       <div class="grid-kpi" :class="{ dim: loading }">
-        <KpiCard title="Доход" icon="tariff" :value="money(data.revenue.current.revenue)"
+        <KpiCard title="Выручка" icon="tariff" :value="money(data.revenue.current.revenue)"
                  :current="data.revenue.current.revenue" :previous="data.revenue.previous.revenue"
                  :lines="[
                    { label: 'Себестоимость', value: money(data.revenue.current.cost) },
@@ -142,6 +142,17 @@ const productMax = computed(() => Math.max(1, ...(data.value?.topProducts.map(p 
                    { label: 'Вернувшиеся', value: count(data.customers.current.returning) },
                    { label: 'Средний чек', value: money(data.customers.current.averageOrder) },
                  ]" />
+        <KpiCard title="Продажи" icon="products" :value="`${count(data.sales.current.units)} шт`"
+                 :current="data.sales.current.units" :previous="data.sales.previous.units"
+                 :lines="[
+                   { label: 'Завершённых заказов', value: count(data.sales.current.orders) },
+                   { label: 'Товаров в заказе', value: String(data.sales.current.perOrder) },
+                 ]" />
+        <KpiCard title="Баланс (получено)" icon="payment" :value="money(data.balance.received)"
+                 :lines="[
+                   { label: 'Ожидается', value: money(data.balance.pending), color: series[3] },
+                   { label: 'Заказов в работе', value: count(data.balance.activeOrders) },
+                 ]" />
       </div>
 
       <div class="grid-2" :class="{ dim: loading }">
@@ -152,20 +163,18 @@ const productMax = computed(() => Math.max(1, ...(data.value?.topProducts.map(p 
           <div class="chart"><Line :data="revenueData" :options="revenueOptions" /></div>
         </section>
         <section class="card card-pad">
-          <div class="card-head"><h2>Статистика заказов</h2><span class="card-sub">по каналам</span></div>
+          <div class="card-head">
+            <h2>Заказы сейчас</h2>
+            <RouterLink to="/orders" class="card-sub">Доска заказов →</RouterLink>
+          </div>
           <ul class="bars">
-            <li v-for="p in data.byPlatform" :key="p.platform">
-              <div class="bar-label"><PlatformIcon :platform="p.platform" show-label /></div>
-              <div class="bar-track">
-                <div class="bar-fill" :style="{ width: (p.orders / platformMax) * 100 + '%', background: platformColor[p.platform] }" />
-              </div>
-              <div class="bar-value num">{{ count(p.orders) }}</div>
-              <div class="bar-sub num faint">{{ money(p.revenue) }}</div>
+            <li v-for="p in data.pipeline" :key="p.status">
+              <div class="bar-label"><span class="badge" :class="p.status">{{ statusLabel[p.status] }}</span></div>
+              <div class="bar-track"><div class="bar-fill" :style="{ width: (p.count / pipelineMax) * 100 + '%' }" /></div>
+              <div class="bar-value num">{{ count(p.count) }}</div>
             </li>
           </ul>
-          <p class="note faint">
-            {{ platformLabel.Telegram }}-бот — {{ Math.round((data.byPlatform[0].orders / Math.max(1, data.orders.current.total)) * 100) }}% всех заказов за период
-          </p>
+          <p v-if="data.balance.overdue" class="note overdue">⚠ Просрочено: {{ data.balance.overdue }} — ждут дольше лимита магазина</p>
         </section>
       </div>
 
@@ -173,26 +182,6 @@ const productMax = computed(() => Math.max(1, ...(data.value?.topProducts.map(p 
         <section class="card card-pad">
           <div class="card-head"><h2>Динамика заказов</h2><span class="card-sub">по статусам, {{ granularityLabel }}</span></div>
           <div class="chart"><Bar :data="dynamicsData" :options="dynamicsOptions" /></div>
-        </section>
-        <section class="card card-pad">
-          <div class="card-head">
-            <h2>Источники трафика</h2><span class="card-sub num">{{ count(sourceTotal) }} польз.</span>
-          </div>
-          <ul class="bars">
-            <li v-for="s in data.trafficSources" :key="s.source">
-              <div class="bar-label">{{ s.source }}</div>
-              <div class="bar-track"><div class="bar-fill" :style="{ width: (s.users / sourceMax) * 100 + '%' }" /></div>
-              <div class="bar-value num">{{ count(s.users) }}</div>
-              <div class="bar-sub num faint">{{ Math.round((s.users / Math.max(1, sourceTotal)) * 100) }}%</div>
-            </li>
-          </ul>
-        </section>
-      </div>
-
-      <div class="grid-2" :class="{ dim: loading }">
-        <section class="card card-pad">
-          <div class="card-head"><h2>Заказы на карте</h2><span class="card-sub">доставка, последние {{ data.map.orders.length }}</span></div>
-          <OrdersMap :data="data.map" />
         </section>
         <section class="card card-pad">
           <div class="card-head"><h2>Топ-10 продуктов</h2><span class="card-sub">по количеству</span></div>
@@ -212,6 +201,11 @@ const productMax = computed(() => Math.max(1, ...(data.value?.topProducts.map(p 
           </ol>
         </section>
       </div>
+
+      <section class="card card-pad map-card" :class="{ dim: loading }">
+        <div class="card-head"><h2>Заказы на карте</h2><span class="card-sub">доставка, последние {{ data.map.orders.length }}</span></div>
+        <OrdersMap :data="data.map" />
+      </section>
 
       <section class="card" :class="{ dim: loading }">
         <div class="card-head card-pad" style="margin: 0; padding-bottom: 0"><h2>Топ-10 клиентов</h2></div>
@@ -241,7 +235,9 @@ const productMax = computed(() => Math.max(1, ...(data.value?.topProducts.map(p 
 </template>
 
 <style scoped>
-.grid-kpi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
+.grid-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.map-card { margin-bottom: 16px; }
+.overdue { color: var(--bad); font-weight: 600; }
 .grid-2 { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
 .dim { opacity: .55; transition: opacity .15s; }
 .chart { height: 300px; }
