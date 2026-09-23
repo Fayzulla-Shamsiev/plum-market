@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PhoneInput from '../../shop/components/PhoneInput.vue'
-import { AuthError, login, register } from '../../auth'
+import { AuthError, demo, loadDemo, login, register } from '../../auth'
 
 // Вход и регистрация администратора (MVP spec). One page, two modes:
 // новый — имя → номер телефона → пароль → аккаунт и магазин; существующий — номер телефона → пароль.
@@ -54,6 +54,29 @@ async function submit() {
   } finally {
     busy.value = false
   }
+}
+
+// Ready-made accounts of the demo store, offered so a presentation doesn't start with typing.
+onMounted(loadDemo)
+
+async function signInAsDemo() {
+  if (!demo.value || busy.value) return
+  busy.value = true
+  error.value = ''
+  try {
+    await login(demo.value.admin.phone, demo.value.admin.password)
+    router.replace(next.value)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Не удалось войти в демо-магазин.'
+  } finally {
+    busy.value = false
+  }
+}
+
+/** "+998901111111" → "+998 90 111 11 11" (the same shape the phone field shows). */
+function pretty(phone: string) {
+  const d = phone.replace(/\D/g, '').slice(-9)
+  return d.length === 9 ? `+998 ${d.slice(0, 2)} ${d.slice(2, 5)} ${d.slice(5, 7)} ${d.slice(7)}` : phone
 }
 
 const perks = [
@@ -138,6 +161,26 @@ const perks = [
           <RouterLink :to="isRegister ? '/login' : '/register'">{{ isRegister ? 'Войти' : 'Зарегистрироваться' }}</RouterLink>
         </p>
       </form>
+
+      <!-- Demo store: a filled-in shop to look around in, for people who don't want to build one first. -->
+      <section v-if="demo" class="demo">
+        <div class="demo-head">
+          <b>Демо-магазин «{{ demo.storeName }}»</b>
+          <span>Каталог, клиенты и заказы за год — чтобы сразу посмотреть, как всё работает.</span>
+        </div>
+        <button type="button" class="demo-go" :disabled="busy" @click="signInAsDemo">Войти как демо-администратор</button>
+        <dl>
+          <div>
+            <dt>Администратор</dt>
+            <dd>{{ pretty(demo.admin.phone) }} · пароль {{ demo.admin.password }}</dd>
+          </div>
+          <div>
+            <dt>Покупатель</dt>
+            <dd>{{ pretty(demo.customer.phone) }} · имя {{ demo.customer.name.split(' ')[0] }}</dd>
+          </div>
+        </dl>
+        <RouterLink :to="`/shop/${demo.storeSlug}`" class="demo-shop">Открыть витрину магазина ↗</RouterLink>
+      </section>
 
       <ul class="perks">
         <li v-for="p in perks" :key="p.title">
@@ -228,6 +271,22 @@ const perks = [
 .foot { margin: 0; text-align: center; color: var(--ink-3); font-size: 13.5px; }
 .foot a { color: var(--blue); font-weight: 600; }
 
+.demo { margin-top: 18px; background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px 18px; }
+.demo-head { display: flex; flex-direction: column; gap: 3px; margin-bottom: 12px; }
+.demo-head b { font-size: 14.5px; font-weight: 650; }
+.demo-head span { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+.demo-go {
+  width: 100%; height: 44px; border: 0; border-radius: 12px; background: var(--blue-50); color: var(--blue);
+  font: inherit; font-size: 14.5px; font-weight: 650; cursor: pointer; transition: background .15s;
+}
+.demo-go:hover:not(:disabled) { background: var(--blue-100); }
+.demo-go:disabled { opacity: .6; cursor: default; }
+.demo dl { margin: 12px 0 0; display: grid; gap: 6px; }
+.demo dl div { display: flex; gap: 8px; font-size: 13px; }
+.demo dt { color: var(--ink-3); min-width: 106px; }
+.demo dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.demo-shop { display: inline-block; margin-top: 12px; font-size: 13px; color: var(--blue); font-weight: 600; }
+
 .perks { list-style: none; margin: 22px 0 0; padding: 0; display: grid; gap: 10px; }
 .perks li { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px 13px 16px; border-left: 2px solid var(--green); background: rgb(255 255 255 / 55%); border-radius: 0 12px 12px 0; }
 .perks b { font-size: 13.5px; font-weight: 650; }
@@ -242,8 +301,9 @@ const perks = [
   .intro { grid-column: 1; text-align: left; margin-top: 18px; }
   .intro h1 { font-size: 40px; }
   .intro p { margin-left: 0; font-size: 16px; }
-  .a-panel { grid-column: 2; grid-row: 1 / span 2; }
-  .perks { grid-column: 1; margin-top: 26px; }
+  .a-panel { grid-column: 2; grid-row: 1 / span 3; }
+  .demo { grid-column: 1; margin-top: 26px; }
+  .perks { grid-column: 1; margin-top: 18px; }
 }
 @media (max-width: 460px) {
   .auth-top { padding: 16px; }

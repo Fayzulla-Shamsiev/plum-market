@@ -4,3 +4,18 @@ services:
     runtime: docker
     plan: free
     healthCheckPath: /
+    envVars:
+      # The demo store (Plum Bakery, its administrator and its customer) is created whenever it is missing from
+      # the database, so every deploy has something to present. Set to false for a blank installation.
+      - key: Demo__Enabled
+        value: "true"
+      # Free instances have no disk: the filesystem is wiped on each deploy, so the demo store is simply seeded
+      # again (with dates relative to the deploy). To keep what people do during a demo, move to a paid instance,
+      # add the disk below and point the database at it:
+      #
+      # - key: ConnectionStrings__Default
+      #   value: Data Source=/var/data/plum.db
+    # disk:
+    #   name: plum-data
+    #   mountPath: /var/data
+    #   sizeGB: 1

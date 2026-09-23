@@ -3,8 +3,9 @@
 **Регистрация и вход администратора** from the third spec (`ТЗ на разработку Plum Market с нуля (2).pdf`):
 an entrepreneur registers with имя + номер телефона + пароль, which creates the administrator **and their store**,
 and lands them in the admin panel. Every administrator sees only their own store, products, categories, customers
-and orders. There is no demo data: a new store starts empty with a ready template (settings, one branch, order
-auto-replies) and the administrator fills the catalog from there.
+and orders. A store created by registration starts empty with a ready template (settings, one branch, order
+auto-replies); alongside it the installation keeps one **demo store** with a year of trading in it, so the product
+can be shown without setting anything up (see below).
 
 **Storefront (витрина покупателя)** from the MVP spec (`ТЗ на разработку Plum Market с нуля (1).pdf`). The
 «Пользовательский workflow», «корзина и оформление заказа», «Избранное» and «Профиль» sections are done. It's served at `/`, and the merchant
@@ -21,8 +22,9 @@ TypeScript, vue-router, Chart.js, Leaflet). UI language: Russian.
 
 ## Run
 
-Requirements: .NET SDK 10 and Node 20+. No database server needed: SQLite creates an empty `plum.db` on first
-start. Open http://localhost:5090/register, create a store, and the panel is yours.
+Requirements: .NET SDK 10 and Node 20+. No database server needed: SQLite creates `plum.db` on first start and
+fills it with the demo store. Open http://localhost:5090/login — the demo accounts are on that page, one click
+away — or http://localhost:5090/register to create your own empty store.
 
 ```bash
 # API on http://localhost:5090 (also serves the built frontend from wwwroot)
@@ -51,6 +53,45 @@ Without a key they still work in **offline mode**. Uzbek Latin ⇄ Cyrillic is a
 (`UzTransliterator`), not AI. Russian ⇄ Uzbek needs Claude; offline, the form tells you so. Descriptions fall back
 to a template. Requests opt into server-side refusal fallbacks (`fallbacks: default`), so a declined request is
 retried on Anthropic's recommended fallback model instead of failing.
+
+### Демо-магазин (what a presentation opens)
+
+On start-up, when no store with the slug `demo` exists, the app creates **Plum Bakery**: 3 branches, 34 products
+in 14 categories, 380 customers, ~3 300 orders over the last 13 months (including a live queue in every status,
+two of them overdue), discounts, promo codes, banners, reviews and a chat inbox. Dates are relative to the
+moment it is seeded, so the dashboard always shows a store that traded *yesterday*.
+
+| | |
+|---|---|
+| Администратор | `+998 90 111 11 11` · пароль `demo1234` |
+| Покупатель (витрина) | `+998 90 222 22 22` · имя `Малика` |
+| Витрина | `/shop/demo` |
+
+Both sign-in pages offer these accounts as a button (`GET /api/auth/demo`), so nothing has to be typed on stage.
+The customer account has orders in flight (one waiting for the store, one on its way), finished orders, bonus
+points, reviews to leave, a saved address and a chat with the store; favourites and "recently viewed" live in the
+browser, so signing in as the demo customer fills those too.
+
+The store is **only created when it is missing** — an existing one is never touched, so anything done during a
+demo stays. `Demo__Enabled=false` (or `dotnet run -- --no-demo`) leaves the installation blank.
+
+### Данные и деплой на Render
+
+Render's free instances have no disk: the container's filesystem is discarded on every deploy, which takes
+`plum.db` with it. The app handles that by re-creating the demo store on the next start, so a deploy never lands
+on an empty site. Orders placed during a demo, however, disappear with that deploy.
+
+To keep everything between deploys, use a paid instance with a disk and point the database at it (both are
+prepared, commented, in `render.yaml`):
+
+```
+disk:      name plum-data, mountPath /var/data, 1 GB
+env var:   ConnectionStrings__Default = Data Source=/var/data/plum.db
+```
+
+The app creates the folder if it's missing, and the demo store is then seeded once and kept. Note that changing
+`AppDbContext.SchemaVersion` still drops the database on the next start — that is how the prototype replaces
+migrations.
 
 ### Accounts, stores and where the storefront lives
 
@@ -227,6 +268,10 @@ backend/PlumMarket.Api/
   Domain/Tenancy.cs           Store, AdminUser, AdminSession + IStoreOwned (what a merchant owns)
   Data/AppDbContext.cs        DbContext; one global query filter per store-owned entity
   Data/StoreProvisioner.cs    the template a store is created with at registration
+  Data/DemoData.cs            the demo store: admin account, 13 months of orders, customers
+  Data/DemoCatalog.cs         its catalog, discounts, reviews and chat inbox
+  Data/DemoMarketing.cs       its promo codes and banners
+  Data/DemoShopper.cs         the demo customer: orders in flight, bonuses, reviews, saved address
   Services/AdminAuth.cs       registration/login by phone + PBKDF2 password, bearer sessions
   Middleware/StoreMiddleware  resolves the store of every request (admin token, or shop slug)
   Domain/OrderFlow.cs         the order status flow: steps, next step, who may cancel, overdue rule
@@ -270,3 +315,5 @@ frontend/src/
 - Uploads are stored on local disk (`backend/PlumMarket.Api/uploads/`). SVG is not accepted.
 - Anyone can register a store on the demo, and `/shops` lists them all. That's deliberate for a prototype, not
   something to ship.
+- The demo accounts and their password are handed out by a public endpoint and printed on the sign-in pages.
+  Turn the demo off (`Demo__Enabled=false`) before this is anything but a prototype.

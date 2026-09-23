@@ -62,6 +62,12 @@ const toggle = (path: string) => (expanded.value = expanded.value === path ? nul
 // The storefront of this administrator's own store.
 const storefront = computed(() => (admin.value ? `/shop/${admin.value.store.slug}` : '/shops'))
 
+/** Accounts are stored as "+998901111111"; show the number the way it was typed. */
+const phone = computed(() => {
+  const d = (admin.value?.phone ?? '').replace(/\D/g, '').slice(-9)
+  return d.length === 9 ? `+998 ${d.slice(0, 2)} ${d.slice(2, 5)} ${d.slice(5, 7)} ${d.slice(7)}` : admin.value?.phone
+})
+
 async function signOut() {
   await logout()
   router.replace('/login')
@@ -110,7 +116,7 @@ async function signOut() {
         <div class="account">
           <span class="who">
             <b>{{ admin?.name }}</b>
-            <small>{{ admin?.phone }}</small>
+            <small>{{ phone }}</small>
           </span>
           <button class="logout" title="Выйти" @click="signOut">
             <Icon name="logout" />

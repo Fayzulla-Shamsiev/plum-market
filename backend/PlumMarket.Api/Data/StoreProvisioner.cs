@@ -54,7 +54,8 @@ public static class StoreProvisioner
         }
     }
 
-    static IEnumerable<AutoReplyTemplate> DefaultAutoReplies()
+    /// <summary>Order notifications every store starts with (the demo store reuses them).</summary>
+    internal static IEnumerable<AutoReplyTemplate> DefaultAutoReplies()
     {
         var texts = new Dictionary<OrderStatus, (string Ru, string Uz, string En)>
         {

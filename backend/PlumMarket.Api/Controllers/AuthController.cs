@@ -58,6 +58,30 @@ public class AuthController(AppDbContext db, AdminAuth auth) : ControllerBase
         return admin is null ? Unauthorized(new { error = "Войдите в панель управления.", code = "unauthorized" }) : Dto(admin);
     }
 
+    public record DemoAccounts(string StoreSlug, string StoreName, DemoAdmin Admin, DemoCustomer Customer);
+    public record DemoAdmin(string Phone, string Password);
+    /// <summary>Favourites and "recently viewed" live in the browser, so the demo account brings its own.</summary>
+    public record DemoCustomer(string Phone, string Name, List<int> Favorites, List<int> Viewed);
+
+    /// <summary>
+    /// The ready-made demo accounts, so the sign-in pages can offer them instead of asking people to remember a
+    /// phone number during a presentation. Returns 204 when this installation has no demo store.
+    /// </summary>
+    [HttpGet("demo")]
+    public async Task<ActionResult<DemoAccounts>> Demo()
+    {
+        var store = await db.Stores.AsNoTracking().FirstOrDefaultAsync(s => s.Slug == DemoData.StoreSlug);
+        if (store is null) return NoContent();
+        // Reads another store's catalog than the request's (there is none), so the per-store filter is off.
+        var picks = await db.Products.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => p.StoreId == store.Id && p.IsActive)
+            .OrderBy(p => p.SortOrder).Select(p => p.Id).Take(9).ToListAsync();
+        return new DemoAccounts(store.Slug, store.Name,
+            new DemoAdmin(DemoData.AdminPhone, DemoData.AdminPassword),
+            new DemoCustomer(DemoData.CustomerPhone, DemoData.CustomerName,
+                picks.Take(4).ToList(), picks.Skip(2).Take(6).Reverse().ToList()));
+    }
+
     [HttpPost("logout")]
     public async Task<IActionResult> Logout()
     {

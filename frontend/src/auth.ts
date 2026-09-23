@@ -23,6 +23,29 @@ export const signedIn = computed(() => !!adminToken.value)
 let onSignedOut: (() => void) | null = null
 export const setSignOutHandler = (fn: () => void) => { onSignedOut = fn }
 
+/** The ready-made accounts of the demo store, when this installation has one. */
+export interface DemoAccounts {
+  storeSlug: string
+  storeName: string
+  admin: { phone: string; password: string }
+  customer: { phone: string; name: string; favorites: number[]; viewed: number[] }
+}
+
+export const demo = ref<DemoAccounts | null>(null)
+let demoLoaded = false
+
+export async function loadDemo() {
+  if (demoLoaded) return demo.value
+  demoLoaded = true
+  try {
+    const res = await fetch('/api/auth/demo')
+    demo.value = res.status === 200 ? await res.json() as DemoAccounts : null
+  } catch {
+    demo.value = null
+  }
+  return demo.value
+}
+
 export class AuthError extends Error {
   field?: string
   constructor(message: string, field?: string) {

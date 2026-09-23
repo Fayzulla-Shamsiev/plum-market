@@ -11,8 +11,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers()
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
-builder.Services.AddDbContext<AppDbContext>(o =>
-    o.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=plum.db"));
+var connectionString = builder.Configuration.GetConnectionString("Default") ?? "Data Source=plum.db";
+// The database may live on a mounted disk (ConnectionStrings__Default=Data Source=/var/data/plum.db) so that a
+// deploy doesn't take the data with it; SQLite needs that folder to exist.
+if (new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource is { } path
+    && Path.GetDirectoryName(Path.GetFullPath(path)) is { Length: > 0 } folder)
+    Directory.CreateDirectory(folder);
+builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connectionString));
 builder.Services.AddScoped<StoreContext>();
 builder.Services.AddScoped<AdminAuth>();
 builder.Services.AddScoped<OrderWorkflow>();
@@ -32,6 +37,16 @@ using (var scope = app.Services.CreateScope())
     if (args.Contains("--reset") || outdated) db.Database.EnsureDeleted();
     if (db.Database.EnsureCreated())
         db.Database.ExecuteSqlRaw($"PRAGMA user_version = {AppDbContext.SchemaVersion}");
+
+    // The demo store ("Plum Bakery" + its administrator and customer) is created when it isn't in the database
+    // yet, so a fresh deploy always has something to show. An existing one is left exactly as it is.
+    if (builder.Configuration.GetValue("Demo:Enabled", true) && !args.Contains("--no-demo"))
+    {
+        var tenant = scope.ServiceProvider.GetRequiredService<StoreContext>();
+        if (DemoData.Ensure(db, tenant))
+            app.Logger.LogInformation("Demo store seeded: /shop/{Slug}, admin {Phone} / {Password}",
+                DemoData.StoreSlug, DemoData.AdminPhone, DemoData.AdminPassword);
+    }
 }
 
 // The built Vue app (frontend `npm run build`) is served from wwwroot.
