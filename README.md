@@ -97,10 +97,15 @@ migrations.
 
 - `/register`, `/login` — администратор. The session is a bearer token in `localStorage`; every `/api/...` call
   carries it, and the server resolves the store from it (`StoreMiddleware`).
-- `/shops` — the storefronts on this installation, because one installation hosts many stores. Opening
-  `/shop/{slug}` selects a shop (its slug is sent as the `X-Store` header on every `/api/shop/...` call) and the
-  storefront keeps its usual paths (`/`, `/cart`, `/profile`, …). A single-store installation skips the choice.
-  In production each store would answer on its own address instead.
+- A shop is reached **by its own address, and only by it** — there is no page that lists the shops on the
+  platform, and no API that returns them. An administrator reaches their own shop's panel; any other shop is
+  just a shop to them, like it is to any customer.
+- In production each store answers on its own subdomain (`bakery.plum.uz`), which `StoreMiddleware` already
+  resolves. On this prototype every store shares one host, so `/shop/{slug}` opens a shop and the browser
+  remembers it (sent as `X-Store` on every `/api/shop/...` call) while the storefront keeps its usual paths
+  (`/`, `/cart`, `/profile`, …). An address that names no shop gets «Магазин не найден» at `/shop`.
+- Because the prototype host names no shop by itself, a bare address falls back to the only store of the
+  installation, or to the demo store. That fallback is the one piece that disappears with real subdomains.
 - Switching shops clears the cart, favourites and customer session: another shop is another account.
 
 ### Database resets on model changes
@@ -290,7 +295,7 @@ backend/PlumMarket.Api/
 frontend/src/
   auth.ts                     admin session: token, register/login/logout, restore after reload
   views/auth/AuthView.vue     вход и регистрация (one page, two modes)
-  shop/views/StoresView.vue   which storefront to open
+  shop/views/NoStoreView.vue  the address belongs to no shop
   views/                      DashboardView (+ SetupChecklist), OrdersView (+ orders/*), CustomersView (+ customers/*),
                               ChatView (+ chat/*), catalog/* (categories, products, discounts, ikpu, stock),
                               marketing/* (broadcasts, promo codes, sources, sms, channel post, banners, reviews)
@@ -313,7 +318,7 @@ frontend/src/
 - The backend still contains unused code from the earlier full admin (broadcasts, SMS, channel posts, traffic
   sources, ИКПУ, employees, Telegram/Instagram channels). The UI no longer reaches it.
 - Uploads are stored on local disk (`backend/PlumMarket.Api/uploads/`). SVG is not accepted.
-- Anyone can register a store on the demo, and `/shops` lists them all. That's deliberate for a prototype, not
-  something to ship.
+- Anyone can register a store on the demo. Stores are separated from each other, but nothing stops a new
+  account from being created — that's deliberate for a prototype, not something to ship.
 - The demo accounts and their password are handed out by a public endpoint and printed on the sign-in pages.
   Turn the demo off (`Demo__Enabled=false`) before this is anything but a prototype.

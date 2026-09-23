@@ -8,9 +8,13 @@ namespace PlumMarket.Api.Middleware;
 /// Decides which store every API request works with, before any controller runs:
 /// <list type="bullet">
 /// <item>admin panel (/api/...) — the store of the signed-in administrator (bearer token); no token, no data;</item>
-/// <item>storefront (/api/shop/...) — the store the shopper opened, by slug (X-Store header or ?store=);</item>
-/// <item>sign-in and the store directory — no store at all.</item>
+/// <item>storefront (/api/shop/...) — the store whose address the shopper opened: its subdomain
+/// (shop.plum.uz, how this works once stores get their own address) or, on a shared host, the slug the browser
+/// carries in X-Store / ?store= after opening /shop/{slug};</item>
+/// <item>sign-in — no store at all.</item>
 /// </list>
+/// There is no way to ask for "all stores": an administrator only ever reaches their own, and a shopper only
+/// reaches the one whose address they opened.
 /// </summary>
 public class StoreMiddleware(RequestDelegate next)
 {
@@ -18,8 +22,7 @@ public class StoreMiddleware(RequestDelegate next)
     {
         var path = ctx.Request.Path.Value ?? "";
         if (!path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/stores", StringComparison.OrdinalIgnoreCase))
+            || path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase))
         {
             await next(ctx);
             return;
@@ -29,14 +32,16 @@ public class StoreMiddleware(RequestDelegate next)
         {
             var slug = ctx.Request.Headers["X-Store"].ToString();
             if (string.IsNullOrWhiteSpace(slug)) slug = ctx.Request.Query["store"].ToString();
-            Domain.Store? store;
-            if (string.IsNullOrWhiteSpace(slug))
+            if (string.IsNullOrWhiteSpace(slug)) slug = Subdomain(ctx.Request.Host.Host);
+
+            var store = string.IsNullOrWhiteSpace(slug) ? null : await db.Stores.FirstOrDefaultAsync(s => s.Slug == slug);
+            if (store is null && string.IsNullOrWhiteSpace(slug))
             {
-                // A deployment with a single store needs no address: it is the store.
+                // Prototype only: every store shares one host here, so an address that names no store falls back
+                // to the single store of this installation (or the demo one). With real subdomains this is dead code.
                 var all = await db.Stores.OrderBy(s => s.Id).Take(2).ToListAsync();
-                store = all.Count == 1 ? all[0] : null;
+                store = all.Count == 1 ? all[0] : await db.Stores.FirstOrDefaultAsync(s => s.Slug == DemoData.StoreSlug);
             }
-            else store = await db.Stores.FirstOrDefaultAsync(s => s.Slug == slug);
             if (store is null)
             {
                 await Fail(ctx, StatusCodes.Status404NotFound, "store_not_found", "Магазин не найден.");
@@ -58,6 +63,15 @@ public class StoreMiddleware(RequestDelegate next)
         tenant.StoreId = admin.StoreId;
         tenant.Store = admin.Store;
         await next(ctx);
+    }
+
+    /// <summary>"bakery.plum.uz" → "bakery"; nothing for a bare domain, an IP or localhost.</summary>
+    static string? Subdomain(string host)
+    {
+        if (host.Length == 0 || System.Net.IPAddress.TryParse(host, out _)) return null;
+        var labels = host.Split('.');
+        // A store's address is <slug>.<domain>.<tld>; "plum.uz" or "localhost" name no store.
+        return labels.Length >= 3 && labels[0] is not ("www" or "app") ? labels[0] : null;
     }
 
     static Task Fail(HttpContext ctx, int status, string code, string message)

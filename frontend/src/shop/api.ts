@@ -253,7 +253,7 @@ async function send<T>(method: string, path: string, params: Params = {}, body?:
     const body = await res.clone().json().catch(() => null) as { code?: string } | null
     if (body?.code === 'store_not_found') {
       storeSlug.value = ''
-      window.location.assign('/shops')
+      window.location.assign('/shop')
     }
   }
   if (res.status === 204) return undefined as T

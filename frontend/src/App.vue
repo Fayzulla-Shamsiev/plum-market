@@ -60,7 +60,7 @@ const stopAdminWatch = watch(() => route.matched.length && !bare.value, admin =>
 const toggle = (path: string) => (expanded.value = expanded.value === path ? null : path)
 
 // The storefront of this administrator's own store.
-const storefront = computed(() => (admin.value ? `/shop/${admin.value.store.slug}` : '/shops'))
+const storefront = computed(() => (admin.value ? `/shop/${admin.value.store.slug}` : '/shop'))
 
 /** Accounts are stored as "+998901111111"; show the number the way it was typed. */
 const phone = computed(() => {

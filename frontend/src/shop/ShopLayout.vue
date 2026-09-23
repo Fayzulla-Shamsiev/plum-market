@@ -141,7 +141,6 @@ onBeforeUnmount(() => { document.title = adminTitle })
         </nav>
         <div class="powered">
           <span>Работает на Plum Market</span>
-          <RouterLink to="/shops">Все магазины →</RouterLink>
           <RouterLink to="/dashboard">Кабинет продавца →</RouterLink>
         </div>
       </div>

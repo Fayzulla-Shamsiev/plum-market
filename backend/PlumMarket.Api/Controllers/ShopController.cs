@@ -55,6 +55,14 @@ public class ShopController(AppDbContext db) : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Which store this address belongs to. Every shop answers only for itself — on its own subdomain in
+    /// production, and after /shop/{slug} on this shared prototype host — so the browser can remember it.
+    /// </summary>
+    [HttpGet("current")]
+    public IActionResult Current([FromServices] StoreContext tenant) =>
+        tenant.Store is { } store ? Ok(new { store.Slug, store.Name }) : NotFound(new { error = "Магазин не найден.", code = "store_not_found" });
+
     /// <summary>What the storefront shell needs on every page: store name, branches (footer) and the category tree (menu).</summary>
     [HttpGet("meta")]
     public async Task<IActionResult> Meta(string lang = "ru")

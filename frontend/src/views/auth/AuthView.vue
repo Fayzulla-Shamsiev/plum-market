@@ -89,14 +89,14 @@ const perks = [
 <template>
   <div class="auth">
     <header class="auth-top">
-      <RouterLink to="/shops" class="mark">
+      <span class="mark">
         <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
           <rect width="40" height="40" rx="12" fill="#1f7aec" />
           <path d="M14 29V12.5h7.2a6.2 6.2 0 0 1 0 12.4H14" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" />
           <circle cx="28.5" cy="28.5" r="3.2" fill="#35d07f" />
         </svg>
         <span>Plum <b>Market</b></span>
-      </RouterLink>
+      </span>
       <RouterLink class="alt" :to="isRegister ? '/login' : '/register'">
         <span class="long">{{ isRegister ? 'У меня уже есть магазин' : 'Создать магазин' }}</span>
         <span class="short">{{ isRegister ? 'Войти' : 'Создать' }}</span>
@@ -191,7 +191,6 @@ const perks = [
     </main>
 
     <footer class="auth-foot">
-      <RouterLink to="/shops">Открыть магазины покупателем ↗</RouterLink>
       <span>Прототип · MVP</span>
     </footer>
   </div>

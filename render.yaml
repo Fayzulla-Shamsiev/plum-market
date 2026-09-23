@@ -9,6 +9,10 @@ services:
       # the database, so every deploy has something to present. Set to false for a blank installation.
       - key: Demo__Enabled
         value: "true"
+      # The container runs in UTC by default, so "Сегодня" on the dashboard would be a UTC day and the seeded
+      # orders would look five hours behind Tashkent.
+      - key: TZ
+        value: Asia/Tashkent
       # Free instances have no disk: the filesystem is wiped on each deploy, so the demo store is simply seeded
       # again (with dates relative to the deploy). To keep what people do during a demo, move to a paid instance,
       # add the disk below and point the database at it:
