@@ -4,7 +4,6 @@ import { nextTick, onMounted, ref } from 'vue'
 import { api, type BranchInput, type BranchRow, type StoreSettings } from '../api'
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
-import PlatformCard from './store/PlatformCard.vue'
 import { count } from '../format'
 
 // "Магазин": everything the storefront shows about the store — О нас, contacts, delivery price and terms, return
@@ -108,17 +107,15 @@ async function removeBranch(b: BranchRow) {
     <div v-if="error" class="error-banner">{{ error }}</div>
     <div v-if="!s" class="skeleton" style="height: 500px" />
 
-    <PlatformCard v-if="s" class="platform-card" />
-
     <form v-if="s" class="stack" @submit.prevent="save">
       <section class="card card-pad">
-        <div class="card-head"><h2>О магазине</h2><span class="card-sub">страница «О нас» и «Связаться с нами»</span></div>
+        <div class="card-head"><h2>Контакты</h2><span class="card-sub">страница «Связаться с нами»</span></div>
         <div class="grid">
-          <label class="field"><span>Название</span><input v-model="s.storeName" class="input" maxlength="80" required /></label>
           <label class="field"><span>Контактный телефон</span><input v-model="s.phone" class="input" maxlength="40" placeholder="+998 78 000 00 00" /></label>
-          <label class="field wide"><span>Часы работы</span><input v-model="s.workingHours" class="input" maxlength="120" placeholder="Ежедневно 08:00–22:00" /></label>
-          <label class="field wide"><span>О нас</span><textarea v-model="s.aboutText" class="input area" rows="5" maxlength="4000" /></label>
+          <label class="field"><span>Часы работы</span><input v-model="s.workingHours" class="input" maxlength="120" placeholder="Ежедневно 08:00–22:00" /></label>
         </div>
+        <p class="faint small">Название магазина, «О нас» и условия возврата — в разделе
+          <RouterLink to="/platforms/website">Платформы → Веб-сайт</RouterLink>.</p>
       </section>
 
       <section class="card card-pad">
@@ -133,11 +130,7 @@ async function removeBranch(b: BranchRow) {
         </div>
       </section>
 
-      <section class="card card-pad">
-        <div class="card-head"><h2>Возврат и обмен</h2><span class="card-sub">страница «Условия возврата и обмена»</span></div>
-        <label class="field"><textarea v-model="s.returnTerms" class="input area" rows="8" maxlength="8000" aria-label="Условия возврата и обмена" /></label>
-      </section>
-
+      
       <section class="card card-pad">
         <div class="card-head"><h2>Заказы</h2></div>
         <label class="field narrow-field"><span>Считать заказ просроченным, если он «Новый» или «В сборке» дольше, минут</span>
@@ -205,7 +198,7 @@ async function removeBranch(b: BranchRow) {
 <style scoped>
 .narrow { max-width: 980px; }
 .stack { display: flex; flex-direction: column; gap: 16px; }
-.platform-card { margin-bottom: 16px; }
+.small { font-size: 12.5px; margin: 10px 0 0; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
 .wide { grid-column: 1 / -1; }
 .area { height: auto; padding: 8px 10px; resize: vertical; line-height: 1.5; }

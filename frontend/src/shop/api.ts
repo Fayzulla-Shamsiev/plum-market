@@ -248,12 +248,18 @@ async function send<T>(method: string, path: string, params: Params = {}, body?:
   })
   // Session expired or revoked: forget it; the page will ask to sign in again.
   if (res.status === 401 && authToken.value) signedOut()
-  // The shop this browser remembers is gone (deleted, or the prototype database was reset).
+  // The shop this browser remembers is gone (deleted, or the prototype database was reset). Forget it and let
+  // the page work out which shop this address belongs to — the flag keeps that from looping.
   if (res.status === 404 && storeSlug.value) {
     const body = await res.clone().json().catch(() => null) as { code?: string } | null
     if (body?.code === 'store_not_found') {
       storeSlug.value = ''
-      window.location.assign('/login')
+      try {
+        if (!sessionStorage.getItem('plum.shop.retried')) {
+          sessionStorage.setItem('plum.shop.retried', '1')
+          window.location.replace('/')
+        }
+      } catch { /* storage blocked */ }
     }
   }
   if (res.status === 204) return undefined as T

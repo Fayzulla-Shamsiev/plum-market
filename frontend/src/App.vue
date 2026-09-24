@@ -8,7 +8,8 @@ import { chatUnread, newOrders, useLookups, watchChatUnread, watchNewOrders } fr
 interface Section { path: string; label: string; icon: string; ready?: boolean; children?: { path: string; label: string }[] }
 
 // MVP admin (spec "Административная часть"): orders and their flow, catalog, customers, dashboard, plus what the
-// storefront needs from the store (chat, promo codes, banners, reviews, store info/branches).
+// storefront needs from the store (chat, promo codes, banners, reviews, store info/branches) and Платформы —
+// where the shop is open: the website every store has, and a Telegram bot if the merchant connects one.
 const sections: Section[] = [
   { path: '/dashboard', label: 'Дашборд', icon: 'dashboard', ready: true },
   { path: '/orders', label: 'Заказы', icon: 'orders', ready: true },
@@ -29,6 +30,13 @@ const sections: Section[] = [
       { path: '/marketing/promocodes', label: 'Промокоды' },
       { path: '/marketing/banners', label: 'Баннеры' },
       { path: '/marketing/reviews', label: 'Отзывы' },
+    ],
+  },
+  {
+    path: '/platforms', label: 'Платформы', icon: 'platforms', ready: true,
+    children: [
+      { path: '/platforms/website', label: 'Веб-сайт' },
+      { path: '/platforms/telegram', label: 'Telegram-бот' },
     ],
   },
   { path: '/store', label: 'Магазин', icon: 'branches', ready: true },
@@ -59,14 +67,8 @@ const stopAdminWatch = watch(() => route.matched.length && !bare.value, admin =>
 
 const toggle = (path: string) => (expanded.value = expanded.value === path ? null : path)
 
-// Where this administrator's own shop opens: its bot in Telegram, or its address on the web.
-const storefront = computed(() => {
-  const store = admin.value?.store
-  if (!store) return '/login'
-  return store.platform === 'Telegram' && store.bot ? store.bot.url : `/shop/${store.slug}`
-})
-const storefrontLabel = computed(() =>
-  admin.value?.store.platform === 'Telegram' && admin.value.store.bot ? 'Открыть бота ↗' : 'Открыть магазин ↗')
+// The administrator's own shop on the web (a Telegram bot, if any, is opened from Платформы).
+const storefront = computed(() => (admin.value ? `/shop/${admin.value.store.slug}` : '/login'))
 
 /** Accounts are stored as "+998901111111"; show the number the way it was typed. */
 const phone = computed(() => {
@@ -118,8 +120,7 @@ async function signOut() {
         </template>
       </nav>
       <div class="sidebar-foot">
-        <a v-if="storefront.startsWith('http')" :href="storefront" target="_blank" rel="noopener" class="shop-link">{{ storefrontLabel }}</a>
-        <RouterLink v-else :to="storefront" class="shop-link">{{ storefrontLabel }}</RouterLink>
+        <RouterLink :to="storefront" class="shop-link">Открыть магазин ↗</RouterLink>
         <div class="account">
           <span class="who">
             <b>{{ admin?.name }}</b>

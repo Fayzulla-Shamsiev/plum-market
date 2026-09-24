@@ -31,15 +31,19 @@ public class StoreLinks(IConfiguration configuration, IHttpContextAccessor acces
     public string ShopUrl(Store store) => $"{BaseUrl}/shop/{store.Slug}";
 
     /// <summary>
-    /// What the bot's "Open Shop" button opens. Normally the shop itself — but Telegram only opens https
-    /// addresses, so a shop created on a local machine points at the published prototype instead: the button
-    /// works straight away, and re-linking from the deployed site later swaps it for the shop's own address.
+    /// What the bot's "Open Shop" button opens: always this shop, never another one. Telegram only opens https,
+    /// so a shop running on a local machine points at the same shop on the published address — connect the bot
+    /// from the deployed site and the button opens the store the customer is meant to see.
     /// </summary>
     public string MiniAppUrl(Store store)
     {
         var own = ShopUrl(store);
-        return own.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? own : PublishedUrl;
+        return own.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? own : $"{PublishedUrl}/shop/{store.Slug}";
     }
+
+    /// <summary>Where Telegram should post this bot's updates, or null while the shop has no public address.</summary>
+    public string? WebhookUrl(Store store) =>
+        BaseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? $"{BaseUrl}/api/telegram/{store.Id}" : null;
 
     /// <summary>True when the button had to fall back to the published prototype rather than this shop.</summary>
     public bool IsFallback(Store store) => MiniAppUrl(store) != ShopUrl(store);

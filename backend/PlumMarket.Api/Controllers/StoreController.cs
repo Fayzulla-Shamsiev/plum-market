@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PlumMarket.Api.Data;
 using PlumMarket.Api.Domain;
-using PlumMarket.Api.Services;
 
 namespace PlumMarket.Api.Controllers;
 
@@ -12,92 +11,33 @@ namespace PlumMarket.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/store")]
-public class StoreController(AppDbContext db, StoreContext tenant, TelegramBotApi telegram, StoreLinks links) : ControllerBase
+public class StoreController(AppDbContext db) : ControllerBase
 {
-    public record PlatformDto(StorePlatform Platform, string Url, BotDto? Bot);
-    public record BotDto(string Username, string Name, string Url, DateTime? LinkedAt, string? Warning, string ButtonUrl, bool ButtonIsFallback);
-    public record PlatformBody(StorePlatform Platform, string? BotToken);
-
-    /// <summary>Где открывается магазин: обычная ссылка или Telegram Mini App в боте администратора.</summary>
-    [HttpGet("platform")]
-    public ActionResult<PlatformDto> GetPlatform() => Platform(tenant.Store!);
-
     /// <summary>
-    /// Switches the platform, connects another bot, or re-attaches the shop to the current one — which is what
-    /// you do after the shop gets its public https address.
+    /// Магазин keeps contacts, delivery and the order time limit. The store's name, «О нас» and the return
+    /// terms belong to Платформы → Веб-сайт, so they are not editable from two places.
     /// </summary>
-    [HttpPut("platform")]
-    public async Task<ActionResult<PlatformDto>> PutPlatform(PlatformBody body)
-    {
-        var store = tenant.Store!;
-        if (body.Platform == StorePlatform.Website)
-        {
-            // Leave the bot as the administrator's own: just stop pointing its button at a shop.
-            if (store.BotToken is { Length: > 0 } token) await telegram.ResetMenuButtonAsync(token);
-            store.Platform = StorePlatform.Website;
-            store.BotToken = null;
-            store.BotUsername = null;
-            store.BotName = null;
-            store.BotLinkedAt = null;
-            store.BotWarning = null;
-            await db.SaveChangesAsync();
-            return Platform(store);
-        }
-
-        var newToken = body.BotToken?.Trim();
-        if (string.IsNullOrWhiteSpace(newToken)) newToken = store.BotToken;
-        if (string.IsNullOrWhiteSpace(newToken))
-            return BadRequest(new { error = "Вставьте токен бота из @BotFather.", field = "botToken" });
-
-        var (bot, error) = await telegram.GetMeAsync(newToken);
-        if (bot is null) return BadRequest(new { error, field = "botToken" });
-        if (await db.Stores.AnyAsync(s => s.BotUsername == bot.Username && s.Id != store.Id))
-            return BadRequest(new { error = $"Бот @{bot.Username} уже подключён к другому магазину.", field = "botToken" });
-
-        store.Platform = StorePlatform.Telegram;
-        store.BotToken = newToken;
-        store.BotUsername = bot.Username;
-        store.BotName = bot.Name;
-        store.BotWarning = await telegram.SetMenuButtonAsync(newToken, links.MiniAppUrl(store), "Open Shop");
-        store.BotLinkedAt = store.BotWarning is null ? DateTime.Now : null;
-
-        var settings = await db.Settings.FirstAsync();
-        settings.BotUsername = bot.Username;
-        await db.SaveChangesAsync();
-        return Platform(store);
-    }
-
-    PlatformDto Platform(Store s) => new(s.Platform, links.ShopUrl(s),
-        s.BotUsername is { Length: > 0 } username
-            ? new BotDto(username, s.BotName ?? username, StoreLinks.BotUrl(s)!, s.BotLinkedAt, s.BotWarning,
-                links.MiniAppUrl(s), links.IsFallback(s))
-            : null);
-
-    public record StoreSettingsDto(string StoreName, string? Phone, string? WorkingHours, string? AboutText, long DeliveryFee,
-        long? FreeDeliveryFrom, string? DeliveryTerms, string? ReturnTerms, int OverdueMinutes);
+    public record StoreSettingsDto(string? Phone, string? WorkingHours, long DeliveryFee,
+        long? FreeDeliveryFrom, string? DeliveryTerms, int OverdueMinutes);
 
     [HttpGet("settings")]
     public async Task<StoreSettingsDto> GetSettings()
     {
         var s = await db.Settings.AsNoTracking().FirstAsync();
-        return new(s.StoreName, s.Phone, s.WorkingHours, s.AboutText, s.DeliveryFee, s.FreeDeliveryFrom, s.DeliveryTerms, s.ReturnTerms, s.OverdueMinutes);
+        return new(s.Phone, s.WorkingHours, s.DeliveryFee, s.FreeDeliveryFrom, s.DeliveryTerms, s.OverdueMinutes);
     }
 
     [HttpPut("settings")]
     public async Task<IActionResult> PutSettings(StoreSettingsDto dto)
     {
-        if (string.IsNullOrWhiteSpace(dto.StoreName)) return BadRequest(new { error = "Укажите название магазина" });
         if (dto.DeliveryFee < 0 || dto.FreeDeliveryFrom < 0) return BadRequest(new { error = "Суммы не могут быть отрицательными" });
         if (dto.OverdueMinutes is < 5 or > 24 * 60) return BadRequest(new { error = "Лимит времени — от 5 минут до 24 часов" });
         var s = await db.Settings.FirstAsync();
-        s.StoreName = dto.StoreName.Trim();
         s.Phone = Clean(dto.Phone, 40);
         s.WorkingHours = Clean(dto.WorkingHours, 120);
-        s.AboutText = Clean(dto.AboutText, 4000);
         s.DeliveryFee = dto.DeliveryFee;
         s.FreeDeliveryFrom = dto.FreeDeliveryFrom is > 0 ? dto.FreeDeliveryFrom : null;
         s.DeliveryTerms = Clean(dto.DeliveryTerms, 8000);
-        s.ReturnTerms = Clean(dto.ReturnTerms, 8000);
         s.OverdueMinutes = dto.OverdueMinutes;
         await db.SaveChangesAsync();
         return Ok(await GetSettings());

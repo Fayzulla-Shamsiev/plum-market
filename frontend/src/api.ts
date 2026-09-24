@@ -1,4 +1,4 @@
-import { adminToken, sessionExpired, type StoreBot, type StorePlatform } from './auth'
+import { adminToken, sessionExpired } from './auth'
 
 /** MVP order flow: Новый → В сборке → Готов → Передан в доставку → В пути → Доставлен → Завершён (+ Отменён). */
 export type OrderStatus = 'New' | 'Assembling' | 'Ready' | 'HandedToCourier' | 'OnTheWay' | 'Delivered' | 'Completed' | 'Cancelled'
@@ -128,15 +128,13 @@ export interface Dashboard {
 }
 
 export interface AutoReply { status: OrderStatus; language: string; enabled: boolean; text: string }
+/** Магазин: contacts, delivery and the order time limit (name, «О нас» and returns live in Платформы). */
 export interface StoreSettings {
-  storeName: string
   phone: string | null
   workingHours: string | null
-  aboutText: string | null
   deliveryFee: number
   freeDeliveryFrom: number | null
   deliveryTerms: string | null
-  returnTerms: string | null
   overdueMinutes: number
 }
 
@@ -179,19 +177,48 @@ export function authHeaders(init?: RequestInit): Record<string, string> {
   return headers
 }
 
-/** Где открывается магазин: обычная ссылка или Telegram Mini App в боте администратора. */
-export interface PlatformInfo {
-  platform: StorePlatform
-  /** The shop's own address — what customers open, and what the bot's button points at. */
+// ---- Платформы: где магазин открыт для покупателей ----
+
+export interface WebsitePlatform {
+  name: string
+  /** The shop's address: /shop/{slug} here, {slug}.plum.uz once stores get their own domain. */
+  slug: string
   url: string
-  bot: StoreBot | null
+  /** «О нас» and «Условия возврата и обмена» — the pages a shopper opens from their profile. */
+  about: string | null
+  returnTerms: string | null
+}
+
+/** The merchant's own bot, once its token has been checked with Telegram. */
+export interface TelegramPlatform {
+  username: string
+  name: string
+  /** t.me link to the bot itself. */
+  url: string
+  linkedAt: string | null
+  /** Why the "Open Shop" button isn't attached yet. */
+  warning: string | null
+  /** What that button opens. */
+  buttonUrl: string
+  /** True when it opens the published prototype rather than this shop (a local run isn't reachable). */
+  buttonIsFallback: boolean
+  /** Whether the bot answers /start with the shop button (needs a public address for Telegram to reach). */
+  greets: boolean
+}
+
+export interface Platforms {
+  website: WebsitePlatform
+  telegram: TelegramPlatform | null
 }
 
 export const api = {
   lookups: () => request<Lookups>('/api/lookups'),
-  platform: () => request<PlatformInfo>('/api/store/platform'),
-  savePlatform: (body: { platform: StorePlatform; botToken?: string }) =>
-    request<PlatformInfo>('/api/store/platform', { method: 'PUT', body: JSON.stringify(body) }),
+  platforms: () => request<Platforms>('/api/platforms'),
+  saveWebsite: (body: { name: string; about: string | null; returnTerms: string | null }) =>
+    request<Platforms>('/api/platforms/website', { method: 'PUT', body: JSON.stringify(body) }),
+  connectBot: (botToken?: string) =>
+    request<Platforms>('/api/platforms/telegram', { method: 'PUT', body: JSON.stringify({ botToken }) }),
+  disconnectBot: () => request<Platforms>('/api/platforms/telegram', { method: 'DELETE' }),
   setup: () => request<Setup>('/api/dashboard/setup'),
   dashboard: (q: Query) => request<Dashboard>(`/api/dashboard${qs(q)}`),
 

@@ -8,22 +8,19 @@ namespace PlumMarket.Api.Controllers;
 
 /// <summary>
 /// Вход и регистрация администратора:
-/// новый — имя → номер телефона → пароль → выбор платформы → аккаунт и магазин → админ-панель;
+/// новый — имя → номер телефона → пароль → аккаунт и магазин → админ-панель;
 /// существующий — номер телефона → пароль → админ-панель своего магазина.
-/// Выбор платформы: веб-сайт (магазин открывается по ссылке) или Telegram Mini App (магазин привязывается к
-/// боту администратора и открывается кнопкой «Open Shop» внутри Telegram).
+/// The new store is a website from the first second; a Telegram bot is connected later in Платформы.
 /// </summary>
 [ApiController]
 [Route("api/auth")]
-public class AuthController(AppDbContext db, AdminAuth auth, TelegramBotApi telegram, StoreLinks links) : ControllerBase
+public class AuthController(AppDbContext db, AdminAuth auth, StoreLinks links) : ControllerBase
 {
-    public record RegisterRequest(string Name, string Phone, string Password, string? StoreName,
-        StorePlatform Platform = StorePlatform.Website, string? BotToken = null);
+    public record RegisterRequest(string Name, string Phone, string Password, string? StoreName);
     public record LoginRequest(string Phone, string Password);
     public record Session(string Token, AdminDto Admin);
     public record AdminDto(int Id, string Name, string Phone, StoreDto Store);
-    public record StoreDto(int Id, string Name, string Slug, StorePlatform Platform, string Url, BotDto? Bot);
-    public record BotDto(string Username, string Name, string Url, DateTime? LinkedAt, string? Warning, string ButtonUrl);
+    public record StoreDto(int Id, string Name, string Slug, string Url);
 
     [HttpPost("register")]
     public async Task<ActionResult<Session>> Register(RegisterRequest req)
@@ -39,22 +36,7 @@ public class AuthController(AppDbContext db, AdminAuth auth, TelegramBotApi tele
         if (await db.Admins.AnyAsync(a => a.Phone == phone))
             return Error("Этот номер уже зарегистрирован — войдите в свой магазин.", "phone");
 
-        // A Telegram shop is only worth creating if the bot really exists: check the token before anything is
-        // written, and take the bot's name and username from Telegram rather than asking for them.
-        TelegramBotApi.BotInfo? bot = null;
-        if (req.Platform == StorePlatform.Telegram)
-        {
-            if (string.IsNullOrWhiteSpace(req.BotToken))
-                return Error("Вставьте токен бота из @BotFather.", "botToken");
-            var (found, error) = await telegram.GetMeAsync(req.BotToken);
-            if (found is null) return Error(error ?? "Не удалось проверить токен.", "botToken");
-            if (await db.Stores.AnyAsync(s => s.BotUsername == found.Username))
-                return Error($"Бот @{found.Username} уже подключён к другому магазину.", "botToken");
-            bot = found;
-        }
-
         var (admin, token) = await auth.RegisterAsync(name, phone, password, storeName);
-        if (bot is not null) await LinkBotAsync(admin.Store, req.BotToken!, bot);
         return new Session(token, Dto(admin));
     }
 
@@ -109,28 +91,7 @@ public class AuthController(AppDbContext db, AdminAuth auth, TelegramBotApi tele
         return NoContent();
     }
 
-    /// <summary>Attaches the shop to the bot's menu button ("Open Shop") and remembers the bot on the store.</summary>
-    async Task LinkBotAsync(Store store, string token, TelegramBotApi.BotInfo bot)
-    {
-        store.Platform = StorePlatform.Telegram;
-        store.BotToken = token.Trim();
-        store.BotUsername = bot.Username;
-        store.BotName = bot.Name;
-        store.BotWarning = await telegram.SetMenuButtonAsync(store.BotToken, links.MiniAppUrl(store), "Open Shop");
-        store.BotLinkedAt = store.BotWarning is null ? DateTime.Now : null;
-
-        // The storefront and the admin panel already show a bot username; keep them in step.
-        var settings = await db.Settings.FirstOrDefaultAsync(s => s.StoreId == store.Id);
-        if (settings is not null) settings.BotUsername = bot.Username;
-        await db.SaveChangesAsync();
-    }
-
-    AdminDto Dto(AdminUser a) => new(a.Id, a.Name, a.Phone, StoreOf(a.Store));
-
-    StoreDto StoreOf(Store s) => new(s.Id, s.Name, s.Slug, s.Platform, links.ShopUrl(s),
-        s.BotUsername is { Length: > 0 } username
-            ? new BotDto(username, s.BotName ?? username, StoreLinks.BotUrl(s)!, s.BotLinkedAt, s.BotWarning, links.MiniAppUrl(s))
-            : null);
+    AdminDto Dto(AdminUser a) => new(a.Id, a.Name, a.Phone, new StoreDto(a.Store.Id, a.Store.Name, a.Store.Slug, links.ShopUrl(a.Store)));
 
     ActionResult<Session> Error(string message, string field) => BadRequest(new { error = message, field });
 }

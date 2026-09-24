@@ -3,30 +3,12 @@ import { computed, ref } from 'vue'
 // Admin-panel session (spec "Вход и регистрация администратора"). The browser keeps only a bearer token;
 // everything the panel loads afterwards is scoped to the store behind that token.
 
-export type StorePlatform = 'Website' | 'Telegram'
-
-/** The merchant's own bot, once its token has been checked with Telegram. */
-export interface StoreBot {
-  username: string
-  name: string
-  url: string
-  linkedAt: string | null
-  /** Why the "Open Shop" button isn't attached yet. */
-  warning: string | null
-  /** What the bot's "Open Shop" button opens. */
-  buttonUrl: string
-  /** True when that is the published prototype rather than this shop (a local run can't be opened from Telegram). */
-  buttonIsFallback?: boolean
-}
-
 export interface AdminStore {
   id: number
   name: string
   slug: string
-  platform: StorePlatform
-  /** Where customers open this shop. */
+  /** Where customers open this shop on the web. */
   url: string
-  bot: StoreBot | null
 }
 export interface Admin { id: number; name: string; phone: string; store: AdminStore }
 
@@ -97,10 +79,8 @@ function start(session: { token: string; admin: Admin }) {
 export const login = (phone: string, password: string) =>
   post<{ token: string; admin: Admin }>('login', { phone, password }).then(start)
 
-export const register = (
-  name: string, phone: string, password: string, storeName: string,
-  platform: StorePlatform, botToken?: string,
-) => post<{ token: string; admin: Admin }>('register', { name, phone, password, storeName, platform, botToken }).then(start)
+export const register = (name: string, phone: string, password: string, storeName: string) =>
+  post<{ token: string; admin: Admin }>('register', { name, phone, password, storeName }).then(start)
 
 /** Loads the administrator behind a stored token after a page reload; false means the session is gone. */
 export async function restore(): Promise<boolean> {

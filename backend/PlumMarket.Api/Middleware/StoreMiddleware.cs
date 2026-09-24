@@ -22,7 +22,9 @@ public class StoreMiddleware(RequestDelegate next)
     {
         var path = ctx.Request.Path.Value ?? "";
         if (!path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase))
+            || path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase)
+            // Telegram calls this one, not a person: it finds its own store by the bot behind the update.
+            || path.StartsWith("/api/telegram", StringComparison.OrdinalIgnoreCase))
         {
             await next(ctx);
             return;

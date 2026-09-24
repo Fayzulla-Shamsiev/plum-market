@@ -1,9 +1,9 @@
 # Plum Market — storefront + кабинет мерчанта (prototype)
 
-**Регистрация и вход администратора** (`ТЗ … (2).pdf`) and **выбор платформы** (`ТЗ … (3).pdf`):
-an entrepreneur registers with имя + номер телефона + пароль and picks where the shop will live — a **веб-сайт**
-or a **Telegram Mini App** inside their own bot. Either way it creates the administrator **and their store**,
-and lands them in the same admin panel. Every administrator sees only their own store, products, categories, customers
+**Регистрация и вход администратора** (`ТЗ … (2).pdf`): an entrepreneur registers with имя + номер телефона +
+пароль, which creates the administrator **and their store**, and lands them in the admin panel. The store is a
+website from that moment; a **Telegram Mini App** (`ТЗ … (3).pdf`) is added later from **Платформы** in the
+panel, and opens the very same shop inside the merchant's own bot. Every administrator sees only their own store, products, categories, customers
 and orders. A store created by registration starts empty with a ready template (settings, one branch, order
 auto-replies); alongside it the installation keeps one **demo store** with a year of trading in it, so the product
 can be shown without setting anything up (see below).
@@ -55,19 +55,33 @@ Without a key they still work in **offline mode**. Uzbek Latin ⇄ Cyrillic is a
 to a template. Requests opt into server-side refusal fallbacks (`fallbacks: default`), so a declined request is
 retried on Anthropic's recommended fallback model instead of failing.
 
-### Выбор платформы: веб-сайт или Telegram Mini App
+### Платформы: где магазин открыт
 
-Registration asks where customers will open the shop:
+The panel's **Платформы** section (below Маркетинг) is where a shop meets its customers. One shop, two doors —
+the catalog, cart and orders behind them are the same.
 
-- **Веб-сайт** — the shop is served at its own address and nothing else is needed.
-- **Telegram Mini App** — the administrator creates a bot in [@BotFather](https://t.me/BotFather) with `/newbot`
-  and pastes its token. The server checks it with `getMe` (which is where the bot's name and username come from —
-  they are never typed), then points the bot's menu button at the shop with `setChatMenuButton`, so customers
-  press **Open Shop** in the bot and the storefront opens inside Telegram.
+- **Веб-сайт** — every store has one from the moment it is registered. The page holds the shop's name, «О нас»
+  and «Условия возврата и обмена» (the pages a shopper opens from their profile), and a button that opens the
+  shop. The address is fixed at registration, so links and a connected bot never go stale.
+- **Telegram-бот** — optional. The administrator creates a bot in [@BotFather](https://t.me/BotFather) with
+  `/newbot` and pastes its token. The server checks it with `getMe` (which is where the bot's name and username
+  come from — they are never typed) and then sets the bot up to sell:
+  - `setChatMenuButton` puts **Open Shop** next to the message field;
+  - `setMyCommands` + `setMyDescription` give the bot a `/start` and something to say in an empty chat;
+  - the bot answers: a customer writes to it and gets a greeting by name with an **«Открыть магазин»** button,
+    so the bot sits at the top of their chat list and the shop is one tap away — no searching, no sign-in.
 
-Both platforms serve the same storefront and the same admin panel; only how it is opened differs. The choice can
-be changed later in **Магазин → Платформа**, which also re-attaches the bot (useful once the shop has a public
-https address) or connects a different one. A bot can belong to only one shop.
+  The page links straight to the bot, re-attaches everything, swaps the bot or lets it go. A bot belongs to one
+  shop only, and the buttons always open **that** shop.
+
+Telegram can only call a webhook on a public https address, so how the bot hears about a message depends on
+where the shop runs: `setWebhook` + `/api/telegram/{storeId}` (checked against a secret Telegram sends back) when
+there is one, and `TelegramPollingService` asking `getUpdates` when there isn't — a shop being tried out on a
+local machine still has a talking bot. Either way the answer is built in `TelegramGreeter`, so it is the same.
+
+**Inside a bot there is only the shop.** Whoever opened it came to buy something, so the router sends any
+non-storefront address — `/dashboard`, `/login`, anything — back to the storefront; the merchant's panel and its
+sign-in do not exist in a Mini App. A shop that can't be loaded shows a plain "магазин недоступен" screen.
 
 Telegram opens a Mini App over **https only**, and a shop running on `localhost` has no such address. Rather
 than leaving the bot without a button, connecting from a local run points it at the published prototype
@@ -291,8 +305,7 @@ messages show in the customer's thread.
 checkout), Баннеры (storefront slider), Отзывы (reply; the customer sees it in Мои отзывы).
 
 ### Магазин (`/store`, `StoreController`)
-Store name, phone, working hours and "О нас" text; delivery fee, free-delivery threshold and delivery terms;
-return terms; the overdue limit; branches (add/edit on a map, copy another branch's stock, delete only without
+Phone and working hours; delivery fee, free-delivery threshold and delivery terms; the overdue limit; branches (add/edit on a map, copy another branch's stock, delete only without
 orders). All of it shows on the storefront's info pages, checkout and branch lists straight away.
 
 ## Layout
@@ -308,7 +321,9 @@ backend/PlumMarket.Api/
   Data/DemoMarketing.cs       its promo codes and banners
   Data/DemoShopper.cs         the demo customer: orders in flight, bonuses, reviews, saved address
   Services/AdminAuth.cs       registration/login by phone + PBKDF2 password, bearer sessions
-  Services/TelegramBotApi.cs  checks a bot token (getMe) and attaches the shop to its menu button
+  Services/TelegramBotApi.cs  checks a bot token (getMe), the menu button, commands, webhook, messages
+  Services/TelegramGreeter.cs what the bot answers a customer: hello + the button that opens the shop
+  Services/TelegramPolling…   asks Telegram for messages when the bot has no webhook (local runs)
   Services/StoreLinks.cs      the shop's public address, for Telegram and for the administrator
   Middleware/StoreMiddleware  resolves the store of every request (admin token, or shop slug)
   Domain/OrderFlow.cs         the order status flow: steps, next step, who may cancel, overdue rule
@@ -320,7 +335,8 @@ backend/PlumMarket.Api/
   Services/ChatService.cs     incoming/outgoing messages, auto-reply, review replies
   Domain/Marketing.cs         broadcasts (+recipients), promo codes, traffic sources, SMS, channel posts, banners
   Services/MarketingService   audience segments, simulated delivery/moderation, SMS parts, promo validation
-  Controllers/                Auth (register/login/me), Stores (directory), Dashboard (+setup checklist),
+  Controllers/                Auth (register/login/me), Platforms (website + Telegram bot),
+                              TelegramWebhook (what the bot answers), Dashboard (+setup checklist),
                               Orders, Customers, Settings, Chat, Categories, Products (+import),
                               Discounts, Ikpu, Stock, Uploads, Ai, Broadcasts, PromoCodes, Sources, Sms,
                               Channel, Banners, Reviews, Tracking (/r/{token}, /s/{slug} redirects)
@@ -328,7 +344,7 @@ frontend/src/
   auth.ts                     admin session: token, register/login/logout, restore after reload
   views/auth/AuthView.vue     вход и регистрация (one page, two modes)
   shop/telegram.ts            Telegram Mini App: SDK, theme, back button, the customer's name
-  views/store/PlatformCard.vue  Магазин → Платформа: switch platform, connect or re-link the bot
+  views/platforms/*           Платформы: Веб-сайт (name, «О нас», возвраты) and Telegram-бот (connect, re-link, drop)
   views/                      DashboardView (+ SetupChecklist), OrdersView (+ orders/*), CustomersView (+ customers/*),
                               ChatView (+ chat/*), catalog/* (categories, products, discounts, ikpu, stock),
                               marketing/* (broadcasts, promo codes, sources, sms, channel post, banners, reviews)

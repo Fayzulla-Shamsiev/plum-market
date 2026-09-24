@@ -4,6 +4,7 @@ import OrdersView from './views/OrdersView.vue'
 import CustomersView from './views/CustomersView.vue'
 import { admin, adminToken, restore } from './auth'
 import { openStore, resolveStore } from './shop/state/store'
+import { inTelegram } from './shop/telegram'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -20,6 +21,8 @@ export const router = createRouter({
 
     // ---- A shop is opened by its own address: /shop/{slug} here, its subdomain in production ----
     { path: '/shop/:slug', redirect: to => { openStore(String(to.params.slug)); return '/' } },
+    // Inside a Telegram bot there is no merchant panel to fall back to: this is a customer's screen.
+    { path: '/unavailable', component: () => import('./shop/views/UnavailableView.vue'), meta: { open: true } },
 
     // ---- Customer storefront ----
     {
@@ -70,6 +73,10 @@ export const router = createRouter({
     { path: '/marketing/banners/:id(\\d+)', component: () => import('./views/marketing/BannerFormView.vue'), props: true },
     { path: '/marketing/reviews', component: () => import('./views/marketing/ReviewsView.vue') },
 
+    { path: '/platforms', redirect: '/platforms/website' },
+    { path: '/platforms/website', component: () => import('./views/platforms/WebsiteView.vue') },
+    { path: '/platforms/telegram', component: () => import('./views/platforms/TelegramView.vue') },
+
     { path: '/store', component: () => import('./views/StoreView.vue') },
 
     // Unknown paths (e.g. removed admin sections) go to the storefront home.
@@ -80,10 +87,17 @@ export const router = createRouter({
 // The storefront needs a shop to show; the admin panel needs a signed-in administrator (spec: "каждый
 // администратор видит и управляет только своим магазином").
 router.beforeEach(async to => {
+  const isShop = !!to.matched[0]?.meta.shop
+  // Inside the bot there is only the shop. Whoever opened it came to buy something, so the merchant's panel and
+  // its sign-in simply don't exist here, whatever address the app is asked for.
+  if (inTelegram.value && !isShop) {
+    if (to.path === '/unavailable') return true
+    return (await resolveStore()) ? '/' : '/unavailable'
+  }
   // Which shop the visitor opened: remembered from its address, or asked of the server once. An address that
   // belongs to no shop is not a shopper's page at all, so it goes to the merchant's sign-in.
-  if (to.matched[0]?.meta.shop) return (await resolveStore()) ? true : '/login'
-  if (to.meta.open) return !adminToken.value ? true : '/dashboard'
+  if (isShop) return (await resolveStore()) ? true : inTelegram.value ? '/unavailable' : '/login'
+  if (to.meta.open) return to.path === '/unavailable' || !adminToken.value ? true : '/dashboard'
   if (!adminToken.value) return { path: '/login', query: { next: to.fullPath } }
   // After a reload only the token is known: fetch the administrator before showing the panel.
   if (!admin.value && !(await restore())) return { path: '/login', query: { next: to.fullPath } }

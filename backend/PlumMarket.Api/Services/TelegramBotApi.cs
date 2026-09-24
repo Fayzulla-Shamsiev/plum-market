@@ -60,6 +60,84 @@ public partial class TelegramBotApi(IHttpClientFactory factory, IConfiguration c
         return result ? null : error ?? "Telegram не принял кнопку меню.";
     }
 
+    /// <summary>
+    /// Everything that makes the bot greet a customer on its own: a /start command, the text shown in an empty
+    /// chat (so the very first screen already explains what this bot is), and the webhook that lets us answer.
+    /// Returns the reason when the webhook could not be set — the bot still works, it just stays silent.
+    /// </summary>
+    public async Task<string?> SetUpGreetingAsync(string token, string storeName, string? webhookUrl, string? secret,
+        CancellationToken ct = default)
+    {
+        await CallAsync<bool>(token, "setMyCommands", new
+        {
+            commands = new[] { new { command = "start", description = "Открыть магазин" } },
+        }, ct);
+
+        var about = $"Магазин «{storeName}». Нажмите «Открыть магазин», чтобы выбрать товары и оформить заказ.";
+        await CallAsync<bool>(token, "setMyShortDescription", new { short_description = Cut(about, 120) }, ct);
+        await CallAsync<bool>(token, "setMyDescription", new { description = Cut(about, 512) }, ct);
+
+        // No public address for Telegram to call: drop any old webhook so the bot can be polled instead.
+        if (webhookUrl is null || secret is null)
+        {
+            await CallAsync<bool>(token, "deleteWebhook", new { drop_pending_updates = true }, ct);
+            return null;
+        }
+
+        var (ok, error) = await CallAsync<bool>(token, "setWebhook", new
+        {
+            url = webhookUrl,
+            secret_token = secret,
+            allowed_updates = new[] { "message" },
+            drop_pending_updates = true,
+        }, ct);
+        return ok ? null : error ?? "Telegram не принял адрес для обновлений.";
+    }
+
+    /// <summary>The greeting itself: a message with the button that opens the shop inside Telegram.</summary>
+    public Task SendShopMessageAsync(string token, long chatId, string text, string buttonText, string shopUrl,
+        CancellationToken ct = default) =>
+        CallAsync<object>(token, "sendMessage", new
+        {
+            chat_id = chatId,
+            text,
+            reply_markup = new
+            {
+                inline_keyboard = new[] { new[] { new { text = buttonText, web_app = new { url = shopUrl } } } },
+            },
+        }, ct);
+
+    public record UpdateDto(
+        [property: JsonPropertyName("update_id")] long UpdateId,
+        MessageDto? Message);
+
+    public record MessageDto(ChatDto Chat, SenderDto? From, string? Text);
+    public record ChatDto(long Id);
+    public record SenderDto([property: JsonPropertyName("first_name")] string? FirstName);
+
+    /// <summary>
+    /// Asks Telegram for new messages. Used for bots we can't give a webhook to — a shop running on a local
+    /// machine has no address Telegram could call — so the bot still answers while it's being tried out.
+    /// </summary>
+    public async Task<List<UpdateDto>> GetUpdatesAsync(string token, long offset, CancellationToken ct = default)
+    {
+        var (updates, _) = await CallAsync<List<UpdateDto>>(token, "getUpdates", new
+        {
+            offset,
+            timeout = 5,
+            allowed_updates = new[] { "message" },
+        }, ct);
+        return updates ?? [];
+    }
+
+    public async Task StopGreetingAsync(string token, CancellationToken ct = default)
+    {
+        await CallAsync<bool>(token, "deleteWebhook", new { drop_pending_updates = true }, ct);
+        await CallAsync<bool>(token, "setMyCommands", new { commands = Array.Empty<object>() }, ct);
+    }
+
+    static string Cut(string text, int max) => text.Length <= max ? text : text[..(max - 1)] + "…";
+
     /// <summary>Puts the bot's menu button back to its default (the commands list).</summary>
     public async Task ResetMenuButtonAsync(string token, CancellationToken ct = default) =>
         await CallAsync<bool>(token, "setChatMenuButton", new { menu_button = new { type = "commands" } }, ct);

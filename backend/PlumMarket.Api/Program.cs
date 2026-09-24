@@ -22,6 +22,9 @@ builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connectionString));
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHttpClient(nameof(TelegramBotApi), c => c.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddSingleton<TelegramBotApi>();
+builder.Services.AddScoped<TelegramGreeter>();
+// Bots without a webhook (a shop running locally) are asked for their messages instead.
+builder.Services.AddHostedService<TelegramPollingService>();
 builder.Services.AddScoped<StoreLinks>();
 builder.Services.AddScoped<StoreContext>();
 builder.Services.AddScoped<AdminAuth>();
