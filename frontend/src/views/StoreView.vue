@@ -4,6 +4,7 @@ import { nextTick, onMounted, ref } from 'vue'
 import { api, type BranchInput, type BranchRow, type StoreSettings } from '../api'
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
+import PlatformCard from './store/PlatformCard.vue'
 import { count } from '../format'
 
 // "Магазин": everything the storefront shows about the store — О нас, contacts, delivery price and terms, return
@@ -107,7 +108,9 @@ async function removeBranch(b: BranchRow) {
     <div v-if="error" class="error-banner">{{ error }}</div>
     <div v-if="!s" class="skeleton" style="height: 500px" />
 
-    <form v-else class="stack" @submit.prevent="save">
+    <PlatformCard v-if="s" class="platform-card" />
+
+    <form v-if="s" class="stack" @submit.prevent="save">
       <section class="card card-pad">
         <div class="card-head"><h2>О магазине</h2><span class="card-sub">страница «О нас» и «Связаться с нами»</span></div>
         <div class="grid">
@@ -202,6 +205,7 @@ async function removeBranch(b: BranchRow) {
 <style scoped>
 .narrow { max-width: 980px; }
 .stack { display: flex; flex-direction: column; gap: 16px; }
+.platform-card { margin-bottom: 16px; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
 .wide { grid-column: 1 / -1; }
 .area { height: auto; padding: 8px 10px; resize: vertical; line-height: 1.5; }

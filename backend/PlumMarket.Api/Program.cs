@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using PlumMarket.Api.Data;
@@ -18,6 +19,10 @@ if (new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).Da
     && Path.GetDirectoryName(Path.GetFullPath(path)) is { Length: > 0 } folder)
     Directory.CreateDirectory(folder);
 builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite(connectionString));
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient(nameof(TelegramBotApi), c => c.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddSingleton<TelegramBotApi>();
+builder.Services.AddScoped<StoreLinks>();
 builder.Services.AddScoped<StoreContext>();
 builder.Services.AddScoped<AdminAuth>();
 builder.Services.AddScoped<OrderWorkflow>();
@@ -28,6 +33,14 @@ builder.Services.AddScoped<CheckoutService>();
 builder.Services.AddSingleton<AiContentService>();
 
 var app = builder.Build();
+
+// Behind Render's proxy the app is reached over https; without this the links we hand to Telegram would say
+// http, and Telegram only opens a Mini App over https.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost,
+    KnownNetworks = { }, KnownProxies = { },
+});
 
 using (var scope = app.Services.CreateScope())
 {

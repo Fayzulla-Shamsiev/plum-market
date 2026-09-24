@@ -20,7 +20,6 @@ export const router = createRouter({
 
     // ---- A shop is opened by its own address: /shop/{slug} here, its subdomain in production ----
     { path: '/shop/:slug', redirect: to => { openStore(String(to.params.slug)); return '/' } },
-    { path: '/shop', component: () => import('./shop/views/NoStoreView.vue'), meta: { open: true } },
 
     // ---- Customer storefront ----
     {
@@ -81,9 +80,10 @@ export const router = createRouter({
 // The storefront needs a shop to show; the admin panel needs a signed-in administrator (spec: "каждый
 // администратор видит и управляет только своим магазином").
 router.beforeEach(async to => {
-  // Which shop the visitor opened: remembered from its address, or asked of the server once.
-  if (to.matched[0]?.meta.shop) return (await resolveStore()) ? true : '/shop'
-  if (to.meta.open) return to.path === '/shop' || !adminToken.value ? true : '/dashboard'
+  // Which shop the visitor opened: remembered from its address, or asked of the server once. An address that
+  // belongs to no shop is not a shopper's page at all, so it goes to the merchant's sign-in.
+  if (to.matched[0]?.meta.shop) return (await resolveStore()) ? true : '/login'
+  if (to.meta.open) return !adminToken.value ? true : '/dashboard'
   if (!adminToken.value) return { path: '/login', query: { next: to.fullPath } }
   // After a reload only the token is known: fetch the administrator before showing the panel.
   if (!admin.value && !(await restore())) return { path: '/login', query: { next: to.fullPath } }

@@ -41,6 +41,13 @@
 .s-section-head .more { margin-left: auto; color: var(--blue); font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 2px; }
 .s-section-head .more:hover { color: var(--blue-600); }
 
+/* ---------- Telegram Mini App ----------
+   The same storefront, opened inside the merchant's bot: Telegram supplies the header and the window is always
+   phone-sized, so the page drops what would be duplicated and keeps clear of the bot's own chrome. */
+html.tg .shop { min-height: 100vh; }
+html.tg .logo small { display: none; }
+html.tg .content { padding-bottom: 96px; }
+
 /* Product grid: 2 per row on phones, up to 5 on wide screens. */
 .s-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 16px; }
 @media (max-width: 640px) { .s-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }

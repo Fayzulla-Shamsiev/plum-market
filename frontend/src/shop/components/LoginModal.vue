@@ -5,6 +5,7 @@ import { shopApi } from '../api'
 import { t } from '../i18n'
 import { favoriteIds } from '../state/favorites'
 import { storeSlug } from '../state/store'
+import { telegramName } from '../telegram'
 import { viewedIds } from '../state/viewed'
 import { cancelLogin, onSignedIn } from '../state/auth'
 import { chatToken } from '../state/chat'
@@ -20,6 +21,8 @@ const touched = ref(false)
 
 // In the demo shop, offer the account that already has orders and reviews instead of a blank one.
 onMounted(loadDemo)
+// Inside Telegram the name is already known — the shopper only has to add a phone number.
+if (telegramName.value) name.value = telegramName.value
 function useDemoAccount() {
   if (!demo.value) return
   const { phone: demoPhone, name: demoName, favorites, viewed } = demo.value.customer

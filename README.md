@@ -1,8 +1,9 @@
 # Plum Market — storefront + кабинет мерчанта (prototype)
 
-**Регистрация и вход администратора** from the third spec (`ТЗ на разработку Plum Market с нуля (2).pdf`):
-an entrepreneur registers with имя + номер телефона + пароль, which creates the administrator **and their store**,
-and lands them in the admin panel. Every administrator sees only their own store, products, categories, customers
+**Регистрация и вход администратора** (`ТЗ … (2).pdf`) and **выбор платформы** (`ТЗ … (3).pdf`):
+an entrepreneur registers with имя + номер телефона + пароль and picks where the shop will live — a **веб-сайт**
+or a **Telegram Mini App** inside their own bot. Either way it creates the administrator **and their store**,
+and lands them in the same admin panel. Every administrator sees only their own store, products, categories, customers
 and orders. A store created by registration starts empty with a ready template (settings, one branch, order
 auto-replies); alongside it the installation keeps one **demo store** with a year of trading in it, so the product
 can be shown without setting anything up (see below).
@@ -54,6 +55,34 @@ Without a key they still work in **offline mode**. Uzbek Latin ⇄ Cyrillic is a
 to a template. Requests opt into server-side refusal fallbacks (`fallbacks: default`), so a declined request is
 retried on Anthropic's recommended fallback model instead of failing.
 
+### Выбор платформы: веб-сайт или Telegram Mini App
+
+Registration asks where customers will open the shop:
+
+- **Веб-сайт** — the shop is served at its own address and nothing else is needed.
+- **Telegram Mini App** — the administrator creates a bot in [@BotFather](https://t.me/BotFather) with `/newbot`
+  and pastes its token. The server checks it with `getMe` (which is where the bot's name and username come from —
+  they are never typed), then points the bot's menu button at the shop with `setChatMenuButton`, so customers
+  press **Open Shop** in the bot and the storefront opens inside Telegram.
+
+Both platforms serve the same storefront and the same admin panel; only how it is opened differs. The choice can
+be changed later in **Магазин → Платформа**, which also re-attaches the bot (useful once the shop has a public
+https address) or connects a different one. A bot can belong to only one shop.
+
+Telegram opens a Mini App over **https only**, and a shop running on `localhost` has no such address. Rather
+than leaving the bot without a button, connecting from a local run points it at the published prototype
+(`Telegram:MiniAppUrl`, default `https://plum-market.onrender.com`) and says so in the panel — the button works
+immediately, it just opens the deployed shop. Connect the bot **from the deployed site** (or press «Привязать
+заново» there) and it opens that administrator's own shop instead. `StoreLinks` builds the address from the
+request — Render's `X-Forwarded-Proto` is honoured — or from `PublicUrl` when set.
+
+Inside Telegram the storefront adapts itself (`frontend/src/shop/telegram.ts`): the SDK is loaded only when
+Telegram's launch parameters are present, the app reports `ready`, takes the full height, paints Telegram's
+header like the page, uses Telegram's own back button for navigation, drops the merchant links a customer has no
+use for, and offers the Telegram account's name at sign-in (Telegram never hands over a phone number).
+
+`Telegram:ApiBase` points the Bot API calls somewhere else — used to exercise the whole flow against a stub.
+
 ### Демо-магазин (what a presentation opens)
 
 On start-up, when no store with the slug `demo` exists, the app creates **Plum Bakery**: 3 branches, 34 products
@@ -103,7 +132,8 @@ migrations.
 - In production each store answers on its own subdomain (`bakery.plum.uz`), which `StoreMiddleware` already
   resolves. On this prototype every store shares one host, so `/shop/{slug}` opens a shop and the browser
   remembers it (sent as `X-Store` on every `/api/shop/...` call) while the storefront keeps its usual paths
-  (`/`, `/cart`, `/profile`, …). An address that names no shop gets «Магазин не найден» at `/shop`.
+  (`/`, `/cart`, `/profile`, …). An address that names no shop isn't a shopper's page at all, so it opens the
+  merchant's sign-in.
 - Because the prototype host names no shop by itself, a bare address falls back to the only store of the
   installation, or to the demo store. That fallback is the one piece that disappears with real subdomains.
 - Switching shops clears the cart, favourites and customer session: another shop is another account.
@@ -278,6 +308,8 @@ backend/PlumMarket.Api/
   Data/DemoMarketing.cs       its promo codes and banners
   Data/DemoShopper.cs         the demo customer: orders in flight, bonuses, reviews, saved address
   Services/AdminAuth.cs       registration/login by phone + PBKDF2 password, bearer sessions
+  Services/TelegramBotApi.cs  checks a bot token (getMe) and attaches the shop to its menu button
+  Services/StoreLinks.cs      the shop's public address, for Telegram and for the administrator
   Middleware/StoreMiddleware  resolves the store of every request (admin token, or shop slug)
   Domain/OrderFlow.cs         the order status flow: steps, next step, who may cancel, overdue rule
   Services/OrderWorkflow.cs   status changes → history, bonus accrual, messages to the customer's chat
@@ -295,7 +327,8 @@ backend/PlumMarket.Api/
 frontend/src/
   auth.ts                     admin session: token, register/login/logout, restore after reload
   views/auth/AuthView.vue     вход и регистрация (one page, two modes)
-  shop/views/NoStoreView.vue  the address belongs to no shop
+  shop/telegram.ts            Telegram Mini App: SDK, theme, back button, the customer's name
+  views/store/PlatformCard.vue  Магазин → Платформа: switch platform, connect or re-link the bot
   views/                      DashboardView (+ SetupChecklist), OrdersView (+ orders/*), CustomersView (+ customers/*),
                               ChatView (+ chat/*), catalog/* (categories, products, discounts, ikpu, stock),
                               marketing/* (broadcasts, promo codes, sources, sms, channel post, banners, reviews)
@@ -322,3 +355,6 @@ frontend/src/
   account from being created — that's deliberate for a prototype, not something to ship.
 - The demo accounts and their password are handed out by a public endpoint and printed on the sign-in pages.
   Turn the demo off (`Demo__Enabled=false`) before this is anything but a prototype.
+- Bot tokens are stored as plain text in SQLite and never leave the server. A real system would encrypt them,
+  and would also verify Telegram's `initData` signature before trusting who the Mini App says its user is — the
+  storefront only uses the name it offers, and still asks for a phone number.

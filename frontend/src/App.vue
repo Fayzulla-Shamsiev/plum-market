@@ -59,8 +59,14 @@ const stopAdminWatch = watch(() => route.matched.length && !bare.value, admin =>
 
 const toggle = (path: string) => (expanded.value = expanded.value === path ? null : path)
 
-// The storefront of this administrator's own store.
-const storefront = computed(() => (admin.value ? `/shop/${admin.value.store.slug}` : '/shop'))
+// Where this administrator's own shop opens: its bot in Telegram, or its address on the web.
+const storefront = computed(() => {
+  const store = admin.value?.store
+  if (!store) return '/login'
+  return store.platform === 'Telegram' && store.bot ? store.bot.url : `/shop/${store.slug}`
+})
+const storefrontLabel = computed(() =>
+  admin.value?.store.platform === 'Telegram' && admin.value.store.bot ? 'Открыть бота ↗' : 'Открыть магазин ↗')
 
 /** Accounts are stored as "+998901111111"; show the number the way it was typed. */
 const phone = computed(() => {
@@ -112,7 +118,8 @@ async function signOut() {
         </template>
       </nav>
       <div class="sidebar-foot">
-        <RouterLink :to="storefront" class="shop-link">Открыть магазин ↗</RouterLink>
+        <a v-if="storefront.startsWith('http')" :href="storefront" target="_blank" rel="noopener" class="shop-link">{{ storefrontLabel }}</a>
+        <RouterLink v-else :to="storefront" class="shop-link">{{ storefrontLabel }}</RouterLink>
         <div class="account">
           <span class="who">
             <b>{{ admin?.name }}</b>

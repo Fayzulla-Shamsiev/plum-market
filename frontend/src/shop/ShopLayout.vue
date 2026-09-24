@@ -15,6 +15,7 @@ import { cartCount } from './state/cart'
 import { chatOpen } from './state/chat'
 import { favoritesCount } from './state/favorites'
 import { rootOf, useMeta } from './store'
+import { inTelegram } from './telegram'
 import { emojiFor } from './visuals'
 
 const route = useRoute()
@@ -141,7 +142,7 @@ onBeforeUnmount(() => { document.title = adminTitle })
         </nav>
         <div class="powered">
           <span>Работает на Plum Market</span>
-          <RouterLink to="/dashboard">Кабинет продавца →</RouterLink>
+          <RouterLink v-if="!inTelegram" to="/dashboard">Кабинет продавца →</RouterLink>
         </div>
       </div>
     </footer>

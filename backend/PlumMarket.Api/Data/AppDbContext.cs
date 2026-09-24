@@ -14,7 +14,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, StoreContext t
     /// Bump when the model changes. The prototype has no migrations: on start-up a DB with a different
     /// version is dropped and re-seeded (see <see cref="Program"/>).
     /// </summary>
-    public const int SchemaVersion = 8;
+    public const int SchemaVersion = 9;
 
     /// <summary>
     /// The store this request works with, resolved by <see cref="StoreMiddleware"/>. Every merchant-owned entity
@@ -147,7 +147,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, StoreContext t
         });
 
         // --- Stores and their administrators (not store-scoped themselves) ---
-        b.Entity<Store>().HasIndex(s => s.Slug).IsUnique();
+        b.Entity<Store>(e =>
+        {
+            e.HasIndex(s => s.Slug).IsUnique();
+            e.Property(s => s.Platform).HasConversion<string>();
+        });
         b.Entity<AdminUser>(e =>
         {
             e.HasIndex(a => a.Phone).IsUnique();

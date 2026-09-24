@@ -2,10 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PhoneInput from '../../shop/components/PhoneInput.vue'
-import { AuthError, demo, loadDemo, login, register } from '../../auth'
+import { AuthError, demo, loadDemo, login, register, type StorePlatform } from '../../auth'
 
-// Вход и регистрация администратора (MVP spec). One page, two modes:
-// новый — имя → номер телефона → пароль → аккаунт и магазин; существующий — номер телефона → пароль.
+// Вход и регистрация администратора. One page, two modes:
+// новый — имя → номер телефона → пароль → выбор платформы (веб-сайт или Telegram Mini App) → аккаунт и магазин;
+// существующий — номер телефона → пароль.
 const props = defineProps<{ mode: 'login' | 'register' }>()
 const route = useRoute()
 const router = useRouter()
@@ -15,6 +16,9 @@ const storeName = ref('')
 const phone = ref('')
 const password = ref('')
 const showPassword = ref(false)
+// Где будет работать магазин. Telegram-магазин живёт в собственном боте администратора, поэтому нужен токен.
+const platform = ref<StorePlatform>('Website')
+const botToken = ref('')
 const busy = ref(false)
 const error = ref('')
 const badField = ref('')
@@ -37,6 +41,8 @@ function valid() {
   if (isRegister.value && name.value.trim().length < 2) return fail('Введите имя — так к вам будет обращаться панель.', 'name')
   if (phone.value.length < 9) return fail('Введите номер телефона полностью.', 'phone')
   if (password.value.length < 6) return fail('Пароль должен быть не короче 6 символов.', 'password')
+  if (isRegister.value && platform.value === 'Telegram' && !botToken.value.trim())
+    return fail('Вставьте токен бота из @BotFather.', 'botToken')
   return true
 }
 
@@ -45,12 +51,14 @@ async function submit() {
   busy.value = true
   try {
     const full = `+998${phone.value}`
-    if (isRegister.value) await register(name.value.trim(), full, password.value, storeName.value.trim())
+    if (isRegister.value)
+      await register(name.value.trim(), full, password.value, storeName.value.trim(), platform.value, botToken.value.trim())
     else await login(full, password.value)
     router.replace(next.value)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Не удалось выполнить вход.'
     badField.value = e instanceof AuthError && e.field ? e.field : ''
+    // Checking a bot token takes a moment; say what failed rather than leaving the button grey.
   } finally {
     busy.value = false
   }
@@ -144,6 +152,36 @@ const perks = [
           </span>
         </label>
 
+        <fieldset v-if="isRegister" class="a-row platform">
+          <span>Где будет работать магазин</span>
+          <div class="choices">
+            <label :class="{ on: platform === 'Website' }">
+              <input v-model="platform" type="radio" value="Website" />
+              <b>Веб-сайт</b>
+              <small>Магазин открывается по обычной ссылке в браузере.</small>
+            </label>
+            <label :class="{ on: platform === 'Telegram' }">
+              <input v-model="platform" type="radio" value="Telegram" />
+              <b>Telegram Mini App</b>
+              <small>Магазин открывается внутри вашего Telegram-бота.</small>
+            </label>
+          </div>
+        </fieldset>
+
+        <div v-if="isRegister && platform === 'Telegram'" class="a-row bot">
+          <ol>
+            <li>Откройте <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> и отправьте команду <code>/newbot</code>.</li>
+            <li>Укажите название бота и его username — он должен заканчиваться на <code>bot</code>.</li>
+            <li>Скопируйте токен из ответа и вставьте его ниже.</li>
+          </ol>
+          <label>
+            <span>Токен бота</span>
+            <input v-model="botToken" class="in" :class="{ bad: badField === 'botToken' }" spellcheck="false"
+              autocomplete="off" placeholder="8123456789:AAF..." />
+            <small>Название и username бота подставятся сами — мы проверим токен в Telegram.</small>
+          </label>
+        </div>
+
         <label v-if="isRegister" class="a-row">
           <span>Название магазина <i>необязательно</i></span>
           <input v-model="storeName" class="in" placeholder="Например, Plum Bakery" />
@@ -153,7 +191,8 @@ const perks = [
         <p v-if="error" class="error">{{ error }}</p>
 
         <button class="go" type="submit" :disabled="busy">
-          {{ busy ? 'Минуту…' : isRegister ? 'Создать магазин' : 'Войти' }}
+          {{ busy ? (isRegister && platform === 'Telegram' ? 'Проверяем бота…' : 'Минуту…')
+            : isRegister ? 'Создать магазин' : 'Войти' }}
         </button>
 
         <p class="foot">
@@ -269,6 +308,27 @@ const perks = [
 .go:disabled { opacity: .6; cursor: default; }
 .foot { margin: 0; text-align: center; color: var(--ink-3); font-size: 13.5px; }
 .foot a { color: var(--blue); font-weight: 600; }
+
+.platform { border: 0; margin: 0; padding: 0; }
+.platform > span { font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.choices { display: grid; gap: 8px; }
+.choices label {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; cursor: pointer;
+  border: 1.5px solid var(--line); border-radius: 14px; padding: 11px 14px; transition: border-color .15s, background .15s;
+}
+.choices label.on { border-color: var(--blue); background: var(--blue-50); }
+.choices input { grid-row: span 2; width: 18px; height: 18px; accent-color: var(--blue); margin: 0; }
+.choices b { font-size: 14.5px; font-weight: 650; }
+.choices small { color: var(--ink-2); font-size: 12.5px; line-height: 1.4; }
+
+.bot { gap: 12px; }
+.bot ol { margin: 0; padding-left: 20px; display: grid; gap: 5px; color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+.bot ol a { color: var(--blue); font-weight: 600; }
+.bot code { background: #f2f5fa; border-radius: 5px; padding: 1px 5px; font-size: 12.5px; }
+.bot label { display: flex; flex-direction: column; gap: 7px; }
+.bot label > span { font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.bot .in { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+.bot small { color: var(--ink-3); font-size: 12.5px; }
 
 .demo { margin-top: 18px; background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px 18px; }
 .demo-head { display: flex; flex-direction: column; gap: 3px; margin-bottom: 12px; }
