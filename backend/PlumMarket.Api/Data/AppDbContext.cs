@@ -14,7 +14,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, StoreContext t
     /// Bump when the model changes. The prototype has no migrations: on start-up a DB with a different
     /// version is dropped and re-seeded (see <see cref="Program"/>).
     /// </summary>
-    public const int SchemaVersion = 11;
+    public const int SchemaVersion = 12;
 
     /// <summary>
     /// The store this request works with, resolved by <see cref="StoreMiddleware"/>. Every merchant-owned entity

@@ -204,6 +204,10 @@ export interface TelegramPlatform {
   buttonIsFallback: boolean
   /** Whether the bot answers /start with the shop button (needs a public address for Telegram to reach). */
   greets: boolean
+  /** What an empty chat with the bot shows, before «Начать». */
+  about: string
+  /** The bot's answer to /start. {name} is the customer's first name. */
+  greeting: string
 }
 
 export interface Platforms {
@@ -219,6 +223,10 @@ export const api = {
   connectBot: (botToken?: string) =>
     request<Platforms>('/api/platforms/telegram', { method: 'PUT', body: JSON.stringify({ botToken }) }),
   disconnectBot: () => request<Platforms>('/api/platforms/telegram', { method: 'DELETE' }),
+  saveBotMessages: (body: { about: string; greeting: string }) =>
+    request<Platforms>('/api/platforms/telegram/messages', { method: 'PUT', body: JSON.stringify(body) }),
+  botText: (kind: 'about' | 'greeting', existing?: string) =>
+    request<{ text: string }>('/api/ai/bot-text', { method: 'POST', body: JSON.stringify({ kind, existing }) }),
   setup: () => request<Setup>('/api/dashboard/setup'),
   dashboard: (q: Query) => request<Dashboard>(`/api/dashboard${qs(q)}`),
 

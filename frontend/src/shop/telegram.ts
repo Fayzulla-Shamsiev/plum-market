@@ -31,6 +31,12 @@ declare global {
 export const inTelegram = ref(false)
 /** The Telegram account that opened the shop — used to offer a name at sign-in (Telegram never gives a phone). */
 export const telegramName = ref('')
+/**
+ * Telegram's signed launch data. Handed to the server once the customer signs in, so their account can be
+ * linked to this chat and order updates can arrive in Telegram; the server checks the signature before
+ * believing any of it.
+ */
+export const telegramInitData = ref('')
 
 /** Storefront colours, so Telegram's own chrome matches the page instead of the user's chat theme. */
 const PAGE = '#f4f6fa'
@@ -79,6 +85,7 @@ export async function initTelegram(): Promise<void> {
 
   const user = tg.initDataUnsafe?.user
   telegramName.value = [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim()
+  telegramInitData.value = tg.initData
 }
 
 /** Telegram's own back button walks the storefront's history; on the home page it disappears. */

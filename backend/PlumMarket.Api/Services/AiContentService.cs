@@ -123,6 +123,42 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
             AiEnabled && note is null ? "openai" : "offline", note);
     }
 
+    /// <summary>
+    /// Writes one of the bot's own texts — what an empty chat shows, or how the bot greets a customer after
+    /// «Начать». Russian only: these are read inside Telegram, where the storefront language doesn't apply.
+    /// </summary>
+    public async Task<(string? Text, string? Note)> BotTextAsync(string kind, string storeName, string? existing, CancellationToken ct)
+    {
+        if (!AiEnabled) return (null, "Не настроен ключ OpenAI.");
+        var greeting = kind == "greeting";
+        var system =
+            "You write the wording of a Telegram bot that sells for a small shop in Uzbekistan. Russian only, " +
+            "warm but businesslike, no emoji, no markdown, no links. " +
+            (greeting
+                ? "Write the bot's answer to /start: 1–3 short sentences. Say hello, say whose shop it is and " +
+                  "that the catalog, cart and checkout open right here in Telegram with the button below. " +
+                  "Use {name} exactly once where the customer's first name goes."
+                : "Write what an empty chat with the bot shows before the customer presses «Начать»: 1–2 " +
+                  "sentences, at most 400 characters, saying whose shop it is and what can be done here.");
+        var facts = $"Shop name: {storeName}";
+        if (!string.IsNullOrWhiteSpace(existing)) facts += $"\nCurrent text the merchant wants improved: {existing}";
+
+        try
+        {
+            var json = await CallAsync("bot_text", system, facts, ObjectSchema(["text"]), ct);
+            var text = json.GetProperty("text").GetString()?.Trim();
+            if (string.IsNullOrWhiteSpace(text)) return (null, "Модель вернула пустой текст.");
+            // The greeting needs its placeholder; a model that forgot it would drop the customer's name.
+            if (greeting && !text.Contains("{name}")) text = text.Replace("Здравствуйте", "Здравствуйте, {name}");
+            return (text, null);
+        }
+        catch (Exception e)
+        {
+            log.LogWarning(e, "AI bot text failed");
+            return (null, $"Не удалось сгенерировать текст: {e.Message}");
+        }
+    }
+
     // ------------------------------------------------------------------ OpenAI
 
     async Task<Dictionary<string, string>> TranslateWithAi(string from, string to, Dictionary<string, string> fields, CancellationToken ct)

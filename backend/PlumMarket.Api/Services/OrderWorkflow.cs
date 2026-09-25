@@ -6,9 +6,10 @@ namespace PlumMarket.Api.Services;
 
 /// <summary>
 /// Order lifecycle: enforces the step-by-step flow (<see cref="OrderFlow"/>), keeps the status history, handles bonus
-/// points on completion and sends the auto-reply for each status into the customer's chat with the store.
+/// points on completion and sends the auto-reply for each status to the customer — in their chat with the store and,
+/// when the shop has a Telegram bot the customer has opened, in Telegram as well.
 /// </summary>
-public class OrderWorkflow(AppDbContext db)
+public class OrderWorkflow(AppDbContext db, StoreContext tenant, TelegramBotApi telegram, StoreLinks links, ILogger<OrderWorkflow> log)
 {
     /// <summary>
     /// Moves an order to <paramref name="status"/> if the flow allows it: the next step, or a cancellation while that's
@@ -74,11 +75,12 @@ public class OrderWorkflow(AppDbContext db)
         if (template is not { Enabled: true } || string.IsNullOrWhiteSpace(template.Text)) return;
 
         var text = Render(template.Text, order, bonus);
+        var toTelegram = await SendToTelegramAsync(order, text);
         db.Notifications.Add(new NotificationLog
         {
             OrderId = order.Id,
             CustomerId = order.CustomerId,
-            Channel = "Чат магазина",
+            Channel = toTelegram ? "Telegram и чат магазина" : "Чат магазина",
             Language = template.Language,
             SentAt = DateTime.Now,
             Text = text,
@@ -100,6 +102,28 @@ public class OrderWorkflow(AppDbContext db)
         conv.Messages.Add(new ChatMessage { Direction = MessageDirection.Out, Text = body, IsAuto = true, SenderName = "Статус заказа", SentAt = DateTime.Now });
         conv.LastMessageAt = DateTime.Now;
         conv.LastMessageText = text;
+    }
+
+    /// <summary>
+    /// The same message in the customer's Telegram, when the shop has a bot and the customer has opened the
+    /// shop inside it (which is how we learn their chat). Telegram being slow or down must not hold up an
+    /// order, so a failure is logged and the chat message still goes out.
+    /// </summary>
+    async Task<bool> SendToTelegramAsync(Order order, string text)
+    {
+        if (tenant.Store is not { BotToken: { Length: > 0 } token } store) return false;
+        if (order.Customer.TelegramChatId is not { } chatId) return false;
+        try
+        {
+            // The templates already name the order, so the message is sent as the merchant wrote it.
+            await telegram.SendShopMessageAsync(token, chatId, text, "🛍 Открыть магазин", links.MiniAppUrl(store));
+            return true;
+        }
+        catch (Exception e)
+        {
+            log.LogWarning(e, "Could not send order {OrderId} update to Telegram", order.Id);
+            return false;
+        }
     }
 
     public static string Render(string text, Order order, long bonus) => text

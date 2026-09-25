@@ -28,6 +28,14 @@ public class Store
     public string? BotName { get; set; }
     /// <summary>When the shop was last attached to the bot's menu button ("Open Shop").</summary>
     public DateTime? BotLinkedAt { get; set; }
+
+    /// <summary>
+    /// What an empty chat with the bot says, before the customer has pressed «Начать» (Telegram calls it the
+    /// bot description). Null means the wording the store gets by default.
+    /// </summary>
+    public string? BotAbout { get; set; }
+    /// <summary>The bot's answer to /start. Null means the default greeting. Placeholders: {name}, {store}.</summary>
+    public string? BotGreeting { get; set; }
     /// <summary>Why the bot isn't fully set up, when it isn't (Telegram refused something).</summary>
     public string? BotWarning { get; set; }
     /// <summary>

@@ -65,7 +65,7 @@ public partial class TelegramBotApi(IHttpClientFactory factory, IConfiguration c
     /// chat (so the very first screen already explains what this bot is), and the webhook that lets us answer.
     /// Returns the reason when the webhook could not be set — the bot still works, it just stays silent.
     /// </summary>
-    public async Task<string?> SetUpGreetingAsync(string token, string storeName, string? webhookUrl, string? secret,
+    public async Task<string?> SetUpGreetingAsync(string token, string about, string? webhookUrl, string? secret,
         CancellationToken ct = default)
     {
         await CallAsync<bool>(token, "setMyCommands", new
@@ -73,9 +73,7 @@ public partial class TelegramBotApi(IHttpClientFactory factory, IConfiguration c
             commands = new[] { new { command = "start", description = "Открыть магазин" } },
         }, ct);
 
-        var about = $"Магазин «{storeName}». Нажмите «Открыть магазин», чтобы выбрать товары и оформить заказ.";
-        await CallAsync<bool>(token, "setMyShortDescription", new { short_description = Cut(about, 120) }, ct);
-        await CallAsync<bool>(token, "setMyDescription", new { description = Cut(about, 512) }, ct);
+        await SetAboutAsync(token, about, ct);
 
         // No public address for Telegram to call: drop any old webhook so the bot can be polled instead.
         if (webhookUrl is null || secret is null)
@@ -106,6 +104,42 @@ public partial class TelegramBotApi(IHttpClientFactory factory, IConfiguration c
                 inline_keyboard = new[] { new[] { new { text = buttonText, web_app = new { url = shopUrl } } } },
             },
         }, ct);
+
+    /// <summary>The text an empty chat with the bot shows, before the customer presses «Начать».</summary>
+    public async Task SetAboutAsync(string token, string about, CancellationToken ct = default)
+    {
+        await CallAsync<bool>(token, "setMyShortDescription", new { short_description = Cut(about, 120) }, ct);
+        await CallAsync<bool>(token, "setMyDescription", new { description = Cut(about, 512) }, ct);
+    }
+
+    /// <summary>
+    /// Checks that the launch data a Mini App page hands us really came from Telegram for this bot: the hash
+    /// is an HMAC over the other fields, keyed by the bot token. Without this anyone could claim any chat id.
+    /// </summary>
+    public static long? VerifiedUserId(string botToken, string initData)
+    {
+        if (string.IsNullOrWhiteSpace(initData)) return null;
+        var pairs = initData.Split('&')
+            .Select(p => p.Split('=', 2))
+            .Where(p => p.Length == 2)
+            .ToDictionary(p => p[0], p => Uri.UnescapeDataString(p[1]));
+        if (!pairs.Remove("hash", out var hash)) return null;
+        pairs.Remove("signature");
+
+        var check = string.Join('\n', pairs.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}"));
+        var secret = System.Security.Cryptography.HMACSHA256.HashData("WebAppData"u8.ToArray(), Encoding.UTF8.GetBytes(botToken));
+        var expected = Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(secret, Encoding.UTF8.GetBytes(check)));
+        if (!expected.Equals(hash, StringComparison.OrdinalIgnoreCase)) return null;
+
+        // Stale data is as good as forged: a page kept open for days shouldn't keep proving who its user is.
+        if (pairs.TryGetValue("auth_date", out var authDate) && long.TryParse(authDate, out var seconds)
+            && DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(seconds) > TimeSpan.FromDays(1)) return null;
+
+        if (!pairs.TryGetValue("user", out var user)) return null;
+        return JsonDocument.Parse(user).RootElement.TryGetProperty("id", out var id) && id.TryGetInt64(out var value)
+            ? value
+            : null;
+    }
 
     public record UpdateDto(
         [property: JsonPropertyName("update_id")] long UpdateId,

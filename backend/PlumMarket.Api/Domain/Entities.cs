@@ -56,6 +56,12 @@ public class Customer : IStoreOwned
     public DateOnly? BirthDate { get; set; }
     /// <summary>male | female | null (not specified).</summary>
     public string? Gender { get; set; }
+    /// <summary>
+    /// The customer's chat with the shop's Telegram bot, learned when they open the Mini App (Telegram signs
+    /// the data it hands the page, and we check that signature). Set = order updates can reach them there.
+    /// </summary>
+    public long? TelegramChatId { get; set; }
+
     // "Настройки": what the customer agreed to receive.
     public bool NotifyOrders { get; set; } = true;
     public bool NotifyPromos { get; set; } = true;

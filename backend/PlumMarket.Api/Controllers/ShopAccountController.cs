@@ -9,8 +9,32 @@ namespace PlumMarket.Api.Controllers;
 /// <summary>Storefront account: sign in by phone + name, profile basics, saved delivery addresses.</summary>
 [ApiController]
 [Route("api/shop/account")]
-public class ShopAccountController(AppDbContext db, ShopAuth auth) : ControllerBase
+public class ShopAccountController(AppDbContext db, ShopAuth auth, StoreContext tenant) : ControllerBase
 {
+    public record TelegramBody(string InitData);
+
+    /// <summary>
+    /// Links this account to the Telegram chat the shop was opened from, so order updates can reach the
+    /// customer there. The page can't simply claim a chat id: Telegram signs the launch data with the bot's
+    /// token, and only a signature we can reproduce is accepted.
+    /// </summary>
+    [HttpPost("telegram")]
+    public async Task<IActionResult> LinkTelegram(TelegramBody body)
+    {
+        if (await auth.CurrentAsync(Request) is not { } customer) return Unauthorized(new { error = "Войдите по номеру телефона" });
+        if (tenant.Store?.BotToken is not { Length: > 0 } token) return Ok(new { linked = false });
+
+        var chatId = TelegramBotApi.VerifiedUserId(token, body.InitData ?? "");
+        if (chatId is null) return Ok(new { linked = false });
+
+        if (customer.TelegramChatId != chatId)
+        {
+            customer.TelegramChatId = chatId;
+            await db.SaveChangesAsync();
+        }
+        return Ok(new { linked = true });
+    }
+
     public record LoginBody(string Phone, string Name, string? ChatToken, string? Lang);
 
     [HttpPost("login")]

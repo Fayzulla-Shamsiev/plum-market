@@ -284,6 +284,7 @@ export const shopApi = {
   quote: (lines: { productId: number; variant: string | null; qty: number }[]) => post<Quote>('cart/quote', { lines }),
   login: (phone: string, name: string, chatToken?: string) => post<{ token: string; me: Me }>('account/login', { phone, name, chatToken, lang: lang.value }),
   logout: () => post<void>('account/logout', {}),
+  linkTelegram: (initData: string) => post<{ linked: boolean }>('account/telegram', { initData }),
   me: () => get<Me>('account/me'),
   updateMe: (body: ProfileUpdate) => send<Me>('PUT', 'account/me', {}, body),
   updateSettings: (body: { language: string; notifyOrders: boolean; notifyPromos: boolean }) => send<Me>('PUT', 'account/settings', {}, body),

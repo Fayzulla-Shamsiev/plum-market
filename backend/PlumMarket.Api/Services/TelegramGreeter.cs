@@ -8,16 +8,33 @@ namespace PlumMarket.Api.Services;
 /// </summary>
 public class TelegramGreeter(TelegramBotApi telegram, StoreLinks links, ILogger<TelegramGreeter> log)
 {
+    /// <summary>The greeting a store starts with, until the administrator writes their own.</summary>
+    public static string DefaultGreeting(string storeName) =>
+        $"Здравствуйте, {{name}}! Это магазин «{storeName}». Нажмите кнопку ниже — каталог, корзина и " +
+        "оформление заказа откроются прямо здесь, в Telegram.";
+
+    /// <summary>What an empty chat shows before «Начать» (Telegram's bot description).</summary>
+    public static string DefaultAbout(string storeName) =>
+        $"Магазин «{storeName}». Нажмите «Открыть магазин», чтобы выбрать товары и оформить заказ.";
+
+    /// <summary>Fills in who is being greeted; an unknown name simply disappears from the sentence.</summary>
+    public static string Render(string text, string? firstName, string storeName)
+    {
+        var name = firstName?.Trim();
+        var rendered = text.Replace("{store}", storeName);
+        rendered = string.IsNullOrEmpty(name)
+            // "Здравствуйте, {name}!" → "Здравствуйте!" rather than a dangling comma.
+            ? System.Text.RegularExpressions.Regex.Replace(rendered, @",?\s*\{name\}", "")
+            : rendered.Replace("{name}", name);
+        return rendered.Trim();
+    }
+
     public async Task ReplyAsync(Store store, long chatId, string? firstName, string? text, CancellationToken ct = default)
     {
         if (store.BotToken is not { Length: > 0 } token) return;
 
-        var name = firstName?.Trim();
-        var greeting = string.IsNullOrEmpty(name) ? "Здравствуйте!" : $"Здравствуйте, {name}!";
-        var body = (text ?? "").TrimStart().StartsWith("/start", StringComparison.OrdinalIgnoreCase)
-            ? $"{greeting} Это магазин «{store.Name}». Нажмите кнопку ниже — каталог, корзина и оформление " +
-              "заказа откроются прямо здесь, в Telegram."
-            : $"{greeting} Чтобы посмотреть товары и оформить заказ, откройте магазин «{store.Name}» кнопкой ниже.";
+        var template = store.BotGreeting is { Length: > 0 } custom ? custom : DefaultGreeting(store.Name);
+        var body = Render(template, firstName, store.Name);
 
         try
         {

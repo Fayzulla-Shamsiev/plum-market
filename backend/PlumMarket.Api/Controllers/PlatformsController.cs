@@ -17,7 +17,7 @@ public class PlatformsController(AppDbContext db, StoreContext tenant, TelegramB
 {
     public record WebsiteDto(string Name, string Slug, string Url, string? About, string? ReturnTerms);
     public record TelegramDto(string Username, string Name, string Url, DateTime? LinkedAt, string? Warning,
-        string ButtonUrl, bool ButtonIsFallback, bool Greets);
+        string ButtonUrl, bool ButtonIsFallback, bool Greets, string About, string Greeting);
     public record PlatformsDto(WebsiteDto Website, TelegramDto? Telegram);
 
     [HttpGet]
@@ -110,13 +110,39 @@ public class PlatformsController(AppDbContext db, StoreContext tenant, TelegramB
         return Dto();
     }
 
+    public record MessagesBody(string? About, string? Greeting);
+
+    /// <summary>
+    /// The two texts the administrator owns: what an empty chat says before «Начать», and what the bot answers
+    /// to /start. Saving pushes the first one to Telegram straight away.
+    /// </summary>
+    [HttpPut("telegram/messages")]
+    public async Task<ActionResult<PlatformsDto>> PutMessages(MessagesBody body)
+    {
+        var store = tenant.Store!;
+        if (store.BotToken is not { Length: > 0 } token) return Bad("Сначала подключите бота.", "botToken");
+
+        var about = Clean(body.About, 500);
+        var greeting = Clean(body.Greeting, 1000);
+        if (about is null) return Bad("Текст для пустого чата не может быть пустым.", "about");
+        if (greeting is null) return Bad("Приветствие не может быть пустым.", "greeting");
+
+        // Remembered as written by the administrator, so the defaults can still be recognised and restored.
+        store.BotAbout = about == TelegramGreeter.DefaultAbout(store.Name) ? null : about;
+        store.BotGreeting = greeting == TelegramGreeter.DefaultGreeting(store.Name) ? null : greeting;
+        await telegram.SetAboutAsync(token, about);
+        await db.SaveChangesAsync();
+        return Dto();
+    }
+
     /// <summary>Teaches the bot to greet customers: /start, the text of an empty chat, and the webhook.</summary>
     async Task SetUpGreetingAsync(Domain.Store store)
     {
         var webhook = links.WebhookUrl(store);
         store.BotWebhookSecret = webhook is null ? null : Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
         // Without a webhook the bot is polled instead, so it still answers — nothing to warn about.
-        await telegram.SetUpGreetingAsync(store.BotToken!, store.Name, webhook, store.BotWebhookSecret);
+        var about = store.BotAbout ?? TelegramGreeter.DefaultAbout(store.Name);
+        await telegram.SetUpGreetingAsync(store.BotToken!, about, webhook, store.BotWebhookSecret);
     }
 
     PlatformsDto Dto()
@@ -127,7 +153,9 @@ public class PlatformsController(AppDbContext db, StoreContext tenant, TelegramB
             new WebsiteDto(s.Name, s.Slug, links.ShopUrl(s), settings.AboutText, settings.ReturnTerms),
             s.BotUsername is { Length: > 0 } username
                 ? new TelegramDto(username, s.BotName ?? username, StoreLinks.BotUrl(s)!, s.BotLinkedAt, s.BotWarning,
-                    links.MiniAppUrl(s), links.IsFallback(s), Greets: true)
+                    links.MiniAppUrl(s), links.IsFallback(s), Greets: true,
+                    About: s.BotAbout ?? TelegramGreeter.DefaultAbout(s.Name),
+                    Greeting: s.BotGreeting ?? TelegramGreeter.DefaultGreeting(s.Name))
                 : null);
     }
 

@@ -15,7 +15,7 @@ import { cartCount } from './state/cart'
 import { chatOpen } from './state/chat'
 import { favoritesCount } from './state/favorites'
 import { rootOf, useMeta } from './store'
-import { inTelegram } from './telegram'
+import { inTelegram, telegramInitData } from './telegram'
 import { emojiFor } from './visuals'
 
 const route = useRoute()
@@ -44,6 +44,10 @@ const toTop = () => window.scrollTo({ top: 0, behavior: 'smooth' })
 watch(() => route.path, () => { menuOpen.value = false; chatOpen.value = false })
 // Restore the signed-in customer (name in the header) after a reload.
 watch(signedIn, s => { if (s && !me.value) shopApi.me().then(m => { me.value = m }).catch(() => {}) }, { immediate: true })
+// Inside the bot, tie the account to this Telegram chat so order updates can arrive there too.
+watch(signedIn, s => {
+  if (s && telegramInitData.value) shopApi.linkTelegram(telegramInitData.value).catch(() => {})
+}, { immediate: true })
 
 const adminTitle = document.title
 watch(() => meta.value?.store.name, n => { if (n) document.title = n }, { immediate: true })
