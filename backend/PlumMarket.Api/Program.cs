@@ -33,6 +33,7 @@ builder.Services.AddScoped<ChatService>();
 builder.Services.AddScoped<MarketingService>();
 builder.Services.AddScoped<ShopAuth>();
 builder.Services.AddScoped<CheckoutService>();
+builder.Services.AddHttpClient(nameof(AiContentService), c => c.Timeout = TimeSpan.FromSeconds(45));
 builder.Services.AddSingleton<AiContentService>();
 
 var app = builder.Build();

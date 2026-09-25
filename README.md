@@ -43,17 +43,28 @@ npm run build
 
 ### AI features (Перевести / Сгенерировать)
 
-The product and category forms have the spec's two AI buttons. They call **Claude** (`claude-opus-5`, via the
-official Anthropic SDK) when credentials are configured:
+The product and category forms have the spec's two AI buttons: **Перевести** fills the other catalog languages
+from the one being edited, and **Сгенерировать** writes a storefront description in all of them. They call
+**OpenAI** (`gpt-4.1-mini` by default, structured JSON output) through the backend — the browser only ever talks
+to `/api/ai/...`, which needs an administrator session.
+
+The API key is read from configuration and nowhere else, so it never reaches the repository or the browser:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...        # or set it in Rider: Run configuration → Environment variables
+# local development — stored outside the repo, in the user secrets store
+cd backend/PlumMarket.Api
+dotnet user-secrets set "OpenAI:ApiKey" "sk-..."
+
+# production (Render → Environment): the same setting as an environment variable
+OpenAI__ApiKey=sk-...        # OPENAI_API_KEY is accepted too
 ```
 
-Without a key they still work in **offline mode**. Uzbek Latin ⇄ Cyrillic is always an exact script conversion
-(`UzTransliterator`), not AI. Russian ⇄ Uzbek needs Claude; offline, the form tells you so. Descriptions fall back
-to a template. Requests opt into server-side refusal fallbacks (`fallbacks: default`), so a declined request is
-retried on Anthropic's recommended fallback model instead of failing.
+`OpenAI:Model` (env `OpenAI__Model`) picks a different model without touching the code. Never put the key in
+`appsettings*.json`, a `.env` file or any frontend code — all of those are served to the browser or committed.
+
+Without a key the buttons still work in **offline mode**: Uzbek Latin ⇄ Cyrillic is an exact script conversion
+(`UzTransliterator`, never AI), Russian ⇄ Uzbek says it needs a key, and descriptions fall back to a template.
+Both failure and fallback are reported in the form, so nothing silently does nothing.
 
 ### Платформы: где магазин открыт
 

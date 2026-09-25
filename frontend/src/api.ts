@@ -423,7 +423,7 @@ export interface SalesHistory {
   months: { month: string; quantity: number; revenue: number }[]
 }
 
-export interface AiResponse { translations: Partial<Record<Lang, Record<string, string>>>; provider: 'claude' | 'offline'; note: string | null }
+export interface AiResponse { translations: Partial<Record<Lang, Record<string, string>>>; provider: 'openai' | 'offline'; note: string | null }
 export interface Upload { url: string; name: string; type: 'image' | 'video' | 'file'; size: number }
 
 // ------------------------------------------------------------------ Chat
@@ -524,7 +524,7 @@ export const catalogApi = {
   salesHistory: (productId: number, branchId?: number | '') => request<SalesHistory>(`/api/stock/${productId}/history${qs({ branchId })}`),
 
   upload: (file: File) => upload<Upload>('/api/uploads', file),
-  aiStatus: () => request<{ provider: 'claude' | 'offline' }>('/api/ai/status'),
+  aiStatus: () => request<{ provider: 'openai' | 'offline' }>('/api/ai/status'),
   translate: (source: Lang, fields: Record<string, string>) => send<AiResponse>('/api/ai/translate', 'POST', { source, fields }),
   describe: (body: { name: string; nameUz?: string; kind: 'product' | 'category'; category?: string; attributes?: Attribute[]; unit?: string; weightGrams?: number | null; existing?: string }) =>
     send<AiResponse>('/api/ai/describe', 'POST', body),

@@ -1,6 +1,6 @@
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
-using Anthropic;
-using Anthropic.Models.Beta.Messages;
 using PlumMarket.Api.Domain;
 
 namespace PlumMarket.Api.Services;
@@ -9,13 +9,41 @@ public record AiResult(Dictionary<string, Dictionary<string, string>> Values, st
 
 /// <summary>
 /// "Перевести" and "Сгенерировать и заполнить автоматически" for catalog forms.
-/// Russian ⇄ Uzbek goes through Claude when API credentials are configured; Uzbek Latin ⇄ Cyrillic is
-/// always done by <see cref="UzTransliterator"/> (same language, exact mapping). Without credentials the
-/// service degrades to an offline mode: script conversion + template descriptions.
+/// Russian ⇄ Uzbek goes through OpenAI when an API key is configured; Uzbek Latin ⇄ Cyrillic is always done by
+/// <see cref="UzTransliterator"/> (same language, exact mapping). Without a key the service degrades to an
+/// offline mode: script conversion + template descriptions.
+///
+/// The key is read from configuration only — `dotnet user-secrets set "OpenAI:ApiKey" …` while developing,
+/// the OpenAI__ApiKey environment variable in production. It never appears in a file that is committed, is
+/// never logged, and never leaves the server: the browser only ever calls our own /api/ai endpoints.
 /// </summary>
-public class AiContentService(IConfiguration config, ILogger<AiContentService> log)
+public class AiContentService(IConfiguration config, IHttpClientFactory factory, ILogger<AiContentService> log)
 {
-    const string Model = "claude-opus-5";
+    /// <summary>Overridable with OpenAI:Model, so the model can change without a deploy of new code.</summary>
+    string Model => config["OpenAI:Model"] is { Length: > 0 } m ? m : "gpt-4.1-mini";
+
+    /// <summary>
+    /// The key, from the user secrets store while developing (`OpenAI:ApiKey`) or from the environment in
+    /// production (`OpenAI__ApiKey`; the conventional `OPENAI_API_KEY` is accepted too, so a host that dislikes
+    /// double underscores still works). Never written to a file in this repository, never logged, never sent
+    /// to the browser.
+    /// </summary>
+    string? ApiKey => First(config["OpenAI:ApiKey"], config["OPENAI_API_KEY"]);
+
+    static string? First(params string?[] values) =>
+        values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
+
+    /// <summary>
+    /// Uzbek is where these models slip: they reach for a Turkish word or transliterate the Russian one.
+    /// Naming the trap is what makes "миндаль" come out as "bodom" rather than "badem" or "minal".
+    /// </summary>
+    const string UzbekRule =
+        "Uzbek must be the Uzbek of Uzbekistan, not Turkish and not transliterated Russian: use the everyday " +
+        "word a shopper in Tashkent would use — bodom (almond), qovoq (pumpkin), yongʻoq (walnut), qaymoq " +
+        "(cream), sariyogʻ (butter), asal (honey), tovuq (chicken), goʻsht (meat), xamir (dough), somsa (not " +
+        "\"samsa\"), non (bread), qahva (coffee), kartoshka, piyoz. If you are unsure of an ingredient's Uzbek " +
+        "name, use the culinary term an Uzbek bakery menu would print. Never invent a word from the Russian " +
+        "one, and re-read the result as a native speaker would.";
 
     static readonly Dictionary<string, string> LanguageNames = new()
     {
@@ -23,13 +51,10 @@ public class AiContentService(IConfiguration config, ILogger<AiContentService> l
         ["uz"] = "Uzbek in the Latin script (official 2023 orthography: oʻ, gʻ, sh, ch)",
     };
 
-    /// <summary>Claude is used when an API key/token is present or explicitly enabled (e.g. an `ant auth login` profile).</summary>
-    public bool ClaudeEnabled =>
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")) ||
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ANTHROPIC_AUTH_TOKEN")) ||
-        config.GetValue<bool>("Ai:UseClaude");
+    /// <summary>Whether a key is configured at all. Only ever reports yes/no — never the key.</summary>
+    public bool AiEnabled => ApiKey is not null;
 
-    public string Provider => ClaudeEnabled ? "claude" : "offline";
+    public string Provider => AiEnabled ? "openai" : "offline";
 
     /// <summary>Fills every other catalog language from the fields written in <paramref name="source"/>.</summary>
     public async Task<AiResult> TranslateAsync(string source, Dictionary<string, string> fields, CancellationToken ct)
@@ -38,32 +63,32 @@ public class AiContentService(IConfiguration config, ILogger<AiContentService> l
         var result = new Dictionary<string, Dictionary<string, string>>();
         if (fields.Count == 0) return new AiResult(result, Provider, "Нет текста для перевода");
 
-        // Normalise Uzbek Cyrillic input to Latin: Claude translates Latin, Cyrillic is then derived exactly.
+        // Normalise Uzbek Cyrillic input to Latin: the model translates Latin, Cyrillic is then derived exactly.
         var pivotLang = source == "oz" ? "uz" : source;
         var pivot = source == "oz" ? fields.ToDictionary(f => f.Key, f => UzTransliterator.ToLatin(f.Value)) : fields;
         if (source == "oz") result["uz"] = pivot;
 
         string? note = null;
         var other = pivotLang == "ru" ? "uz" : "ru";
-        if (ClaudeEnabled)
+        if (AiEnabled)
         {
             try
             {
-                result[other] = await TranslateWithClaude(pivotLang, other, pivot, ct);
+                result[other] = await TranslateWithAi(pivotLang, other, pivot, ct);
             }
             catch (Exception e)
             {
-                log.LogWarning(e, "Claude translation failed");
-                note = $"Перевод {LangLabel(other)} недоступен: {e.Message}";
+                log.LogWarning(e, "AI translation failed");
+                note = $"Перевод на {LangLabel(other)} не удался: {e.Message}";
             }
         }
         else
         {
-            note = $"Для перевода на {LangLabel(other)} подключите Claude (переменная ANTHROPIC_API_KEY). Кириллица/латиница заполнены автоматически.";
+            note = $"Перевод на {LangLabel(other)} недоступен: не настроен ключ OpenAI. Кириллица/латиница заполнены автоматически.";
         }
 
         // Uzbek Latin → Cyrillic is a script conversion, not a translation.
-        if (result.TryGetValue("uz", out var uzFromClaude)) result["oz"] = uzFromClaude.ToDictionary(f => f.Key, f => UzTransliterator.ToCyrillic(f.Value));
+        if (result.TryGetValue("uz", out var uzTranslated)) result["oz"] = uzTranslated.ToDictionary(f => f.Key, f => UzTransliterator.ToCyrillic(f.Value));
         else if (source == "uz") result["oz"] = fields.ToDictionary(f => f.Key, f => UzTransliterator.ToCyrillic(f.Value));
 
         result.Remove(source);
@@ -75,52 +100,52 @@ public class AiContentService(IConfiguration config, ILogger<AiContentService> l
     {
         Dictionary<string, string> texts;
         string? note = null;
-        if (ClaudeEnabled)
+        if (AiEnabled)
         {
             try
             {
-                texts = await DescribeWithClaude(req, ct);
+                texts = await DescribeWithAi(req, ct);
             }
             catch (Exception e)
             {
-                log.LogWarning(e, "Claude description failed");
+                log.LogWarning(e, "AI description failed");
                 texts = TemplateDescription(req);
-                note = $"Claude недоступен ({e.Message}) — использован шаблон.";
+                note = $"Генерация не удалась ({e.Message}) — использован шаблон.";
             }
         }
         else
         {
             texts = TemplateDescription(req);
-            note = "Описание собрано по шаблону. Подключите Claude (ANTHROPIC_API_KEY) для генерации ИИ.";
+            note = "Описание собрано по шаблону: не настроен ключ OpenAI.";
         }
         texts["oz"] = UzTransliterator.ToCyrillic(texts["uz"]);
         return new AiResult(texts.ToDictionary(t => t.Key, t => new Dictionary<string, string> { ["description"] = t.Value }),
-            ClaudeEnabled && note is null ? "claude" : "offline", note);
+            AiEnabled && note is null ? "openai" : "offline", note);
     }
 
-    // ------------------------------------------------------------------ Claude
+    // ------------------------------------------------------------------ OpenAI
 
-    async Task<Dictionary<string, string>> TranslateWithClaude(string from, string to, Dictionary<string, string> fields, CancellationToken ct)
+    async Task<Dictionary<string, string>> TranslateWithAi(string from, string to, Dictionary<string, string> fields, CancellationToken ct)
     {
         var system =
             "You translate product catalog content for an online store in Uzbekistan (bakery, café, retail). " +
             "Translate each field's value faithfully and naturally for shoppers. Keep brand names, numbers, units " +
-            "and sizes as they are. Keep the same line breaks. Return only the translated fields.";
+            "and sizes as they are. Keep the same line breaks. Return only the translated fields.\n" + UzbekRule;
         var user = $"Translate from {LanguageNames[from]} to {LanguageNames[to]}.\n\n" +
                    JsonSerializer.Serialize(fields, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-        var schema = ObjectSchema(fields.Keys);
-        var json = await CallClaude(system, user, schema, ct);
+        var json = await CallAsync("translation", system, user, ObjectSchema(fields.Keys), ct);
         return fields.Keys.ToDictionary(k => k, k => json.TryGetProperty(k, out var v) ? v.GetString() ?? "" : "");
     }
 
-    async Task<Dictionary<string, string>> DescribeWithClaude(DescribeRequest req, CancellationToken ct)
+    async Task<Dictionary<string, string>> DescribeWithAi(DescribeRequest req, CancellationToken ct)
     {
         var what = req.Kind == "category" ? "product category" : "product";
         var system =
             $"You write short, appetising storefront descriptions for an online store in Uzbekistan. " +
             $"Write 2–3 sentences (max ~350 characters) for the {what}. Be concrete, no invented facts about " +
             "ingredients, certifications or prices that are not given. No emojis, no markdown. " +
-            "Write the same description once in Russian (ru) and once in Uzbek Latin script (uz, official orthography).";
+            "Write the same description once in Russian (ru) and once in Uzbek Latin script (uz, official " +
+            "orthography).\n" + UzbekRule;
         var facts = new List<string> { $"Name: {req.Name}" };
         if (!string.IsNullOrWhiteSpace(req.Category)) facts.Add($"Category: {req.Category}");
         if (req.Attributes is { Count: > 0 }) facts.Add("Attributes: " + string.Join("; ", req.Attributes.Select(a => $"{a.Name}: {a.Value}")));
@@ -128,7 +153,7 @@ public class AiContentService(IConfiguration config, ILogger<AiContentService> l
         if (req.WeightGrams is > 0) facts.Add($"Weight: {req.WeightGrams} g");
         if (!string.IsNullOrWhiteSpace(req.Existing)) facts.Add($"Merchant's notes / current text: {req.Existing}");
 
-        var json = await CallClaude(system, string.Join("\n", facts), ObjectSchema(["ru", "uz"]), ct);
+        var json = await CallAsync("description", system, string.Join("\n", facts), ObjectSchema(["ru", "uz"]), ct);
         return new Dictionary<string, string>
         {
             ["ru"] = json.GetProperty("ru").GetString() ?? "",
@@ -136,30 +161,64 @@ public class AiContentService(IConfiguration config, ILogger<AiContentService> l
         };
     }
 
-    async Task<JsonElement> CallClaude(string system, string user, Dictionary<string, JsonElement> schema, CancellationToken ct)
+    /// <summary>
+    /// One chat completion that must answer with an object matching <paramref name="schema"/>. The key is
+    /// attached to this request and nowhere else; failures are logged without it.
+    /// </summary>
+    async Task<JsonElement> CallAsync(string schemaName, string system, string user,
+        Dictionary<string, JsonElement> schema, CancellationToken ct)
     {
-        AnthropicClient client = new();
-        var response = await client.Beta.Messages.Create(new MessageCreateParams
-        {
-            Model = Model,
-            MaxTokens = 16000,
-            System = system,
-            // Short, well-specified writing task: low effort keeps it fast and cheap.
-            OutputConfig = new BetaOutputConfig
-            {
-                Effort = Effort.Low,
-                Format = new BetaJsonOutputFormat { Schema = schema },
-            },
-            // If a safety classifier declines, re-serve on the recommended fallback model instead of failing.
-            Betas = ["server-side-fallback-2026-07-01"],
-            Fallbacks = new Default(),
-            Messages = [new() { Role = Role.User, Content = user }],
-        }, ct);
+        if (ApiKey is not { } key) throw new InvalidOperationException("ключ OpenAI не настроен");
 
-        if (response.StopReason == "refusal") throw new InvalidOperationException("запрос отклонён моделью");
-        var text = string.Concat(response.Content.Select(b => b.Value).OfType<BetaTextBlock>().Select(t => t.Text));
-        return JsonDocument.Parse(text).RootElement.Clone();
+        var payload = new
+        {
+            model = Model,
+            messages = new object[]
+            {
+                new { role = "system", content = system },
+                new { role = "user", content = user },
+            },
+            response_format = new
+            {
+                type = "json_schema",
+                json_schema = new { name = schemaName, strict = true, schema },
+            },
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+
+        using var client = factory.CreateClient(nameof(AiContentService));
+        using var response = await client.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            log.LogWarning("OpenAI {Status}: {Body}", (int)response.StatusCode, Trim(body));
+            throw new InvalidOperationException(Explain(response.StatusCode, body));
+        }
+
+        var content = JsonDocument.Parse(body).RootElement
+            .GetProperty("choices")[0].GetProperty("message");
+        // A refusal comes back in its own field rather than as content.
+        if (content.TryGetProperty("refusal", out var refusal) && refusal.ValueKind == JsonValueKind.String)
+            throw new InvalidOperationException("запрос отклонён моделью");
+        return JsonDocument.Parse(content.GetProperty("content").GetString() ?? "{}").RootElement.Clone();
     }
+
+    /// <summary>What the merchant sees. OpenAI's own wording is for the log, not for a catalog form.</summary>
+    static string Explain(System.Net.HttpStatusCode status, string body) => status switch
+    {
+        System.Net.HttpStatusCode.Unauthorized => "ключ OpenAI отклонён",
+        System.Net.HttpStatusCode.TooManyRequests => "лимит запросов OpenAI исчерпан, попробуйте позже",
+        System.Net.HttpStatusCode.NotFound when body.Contains("model", StringComparison.OrdinalIgnoreCase) =>
+            "выбранная модель недоступна для этого ключа",
+        _ => $"OpenAI ответил ошибкой {(int)status}",
+    };
+
+    static string Trim(string body) => body.Length <= 500 ? body : body[..500] + "…";
 
     static Dictionary<string, JsonElement> ObjectSchema(IEnumerable<string> keys)
     {

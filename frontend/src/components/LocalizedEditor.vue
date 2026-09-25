@@ -46,7 +46,7 @@ async function translate() {
     name.value = n
     description.value = d
     noteKind.value = r.note ? 'warn' : 'ok'
-    note.value = r.note ?? `Переведено: ${done.join(', ')}${r.provider === 'claude' ? ' (Claude)' : ''}`
+    note.value = r.note ?? `Переведено: ${done.join(', ')}${r.provider === 'openai' ? ' (OpenAI)' : ''}`
   } catch (e) {
     noteKind.value = 'warn'
     note.value = (e as Error).message
@@ -74,7 +74,7 @@ async function generate() {
       if (f.description) d[l] = f.description
     description.value = d
     noteKind.value = r.note ? 'warn' : 'ok'
-    note.value = r.note ?? 'Описание сгенерировано на всех языках (Claude)'
+    note.value = r.note ?? 'Описание сгенерировано на всех языках (OpenAI)'
   } catch (e) {
     noteKind.value = 'warn'
     note.value = (e as Error).message

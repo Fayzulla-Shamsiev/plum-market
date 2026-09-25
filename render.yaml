@@ -13,6 +13,10 @@ services:
       # orders would look five hours behind Tashkent.
       - key: TZ
         value: Asia/Tashkent
+      # AI helpers in the catalog forms. The key itself is set in the Render dashboard and never in this file:
+      # sync: false means "this service needs the variable, ask for its value there".
+      - key: OpenAI__ApiKey
+        sync: false
       # Free instances have no disk: the filesystem is wiped on each deploy, so the demo store is simply seeded
       # again (with dates relative to the deploy). To keep what people do during a demo, move to a paid instance,
       # add the disk below and point the database at it:
