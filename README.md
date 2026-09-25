@@ -92,11 +92,20 @@ the catalog, cart and orders behind them are the same.
     pushes the first straight to Telegram.
   - **Автоответчик** — the per-status order messages, the same editor as Заказы → «Сообщения покупателю».
 
-**Order updates reach the customer in Telegram.** When the shop has a bot and the customer has opened the shop
-inside it, every status change is delivered both to their chat with the store on the site and to Telegram, with
-the button to reopen the shop; the order's notification log says which. The link between an account and a chat
-is made by the Mini App: Telegram signs its launch data with the bot token, the server re-computes that HMAC
-(`TelegramBotApi.VerifiedUserId`) and only then stores the chat id, so a page cannot claim someone else's chat.
+**Order updates reach the customer in Telegram.** When the shop has a bot and the customer's chat is known,
+every status change is delivered both to their chat with the store on the site and to Telegram, with the button
+to reopen the shop; the order's notification log says which. A chat becomes known in one of two ways:
+
+- **The bot asks.** Its greeting carries a «📱 Получать статусы заказов» button; one tap shares the number and
+  ties that chat to the customer with it (a number we haven't seen becomes a customer there and then, so they
+  are recognised when they order). Платформы → Telegram-бот shows how many customers are subscribed this way.
+- **The Mini App tells us.** Telegram signs the launch data it hands the page with the bot token; the server
+  re-computes that HMAC (`TelegramBotApi.VerifiedUserId`) and only then stores the chat id, so a page cannot
+  claim someone else's chat.
+
+Note that Telegram calls the bot's webhook outside any request, so nothing has said which store it is — the
+handler sets that itself (`TelegramGreeter.HandleAsync`). Without it the per-store filter hides every customer
+and the link silently writes to no shop at all.
 
 Telegram can only call a webhook on a public https address, so how the bot hears about a message depends on
 where the shop runs: `setWebhook` + `/api/telegram/{storeId}` (checked against a secret Telegram sends back) when

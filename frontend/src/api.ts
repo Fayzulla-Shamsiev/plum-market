@@ -208,6 +208,8 @@ export interface TelegramPlatform {
   about: string
   /** The bot's answer to /start. {name} is the customer's first name. */
   greeting: string
+  /** How many customers currently receive order updates in this bot. */
+  subscribers: number
 }
 
 export interface Platforms {

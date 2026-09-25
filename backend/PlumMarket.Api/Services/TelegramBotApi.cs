@@ -93,16 +93,35 @@ public partial class TelegramBotApi(IHttpClientFactory factory, IConfiguration c
     }
 
     /// <summary>The greeting itself: a message with the button that opens the shop inside Telegram.</summary>
+    /// <summary>
+    /// A message with the shop button under it. With <paramref name="askForPhone"/> the buttons sit under the
+    /// input field instead (a reply keyboard), because only that kind can ask for a phone number — which is how
+    /// a chat gets tied to a customer who has never opened the Mini App.
+    /// </summary>
     public Task SendShopMessageAsync(string token, long chatId, string text, string buttonText, string shopUrl,
-        CancellationToken ct = default) =>
+        bool askForPhone = false, CancellationToken ct = default) =>
         CallAsync<object>(token, "sendMessage", new
         {
             chat_id = chatId,
             text,
-            reply_markup = new
-            {
-                inline_keyboard = new[] { new[] { new { text = buttonText, web_app = new { url = shopUrl } } } },
-            },
+            reply_markup = askForPhone
+                ? new
+                {
+                    keyboard = new object[]
+                    {
+                        new object[] { new { text = buttonText, web_app = new { url = shopUrl } } },
+                        new object[] { new { text = "📱 Получать статусы заказов", request_contact = true } },
+                    },
+                    resize_keyboard = true,
+                }
+                : (object)new
+                {
+                    keyboard = new object[]
+                    {
+                        new object[] { new { text = buttonText, web_app = new { url = shopUrl } } },
+                    },
+                    resize_keyboard = true,
+                },
         }, ct);
 
     /// <summary>The text an empty chat with the bot shows, before the customer presses «Начать».</summary>
@@ -124,12 +143,13 @@ public partial class TelegramBotApi(IHttpClientFactory factory, IConfiguration c
             .Where(p => p.Length == 2)
             .ToDictionary(p => p[0], p => Uri.UnescapeDataString(p[1]));
         if (!pairs.Remove("hash", out var hash)) return null;
-        pairs.Remove("signature");
 
-        var check = string.Join('\n', pairs.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}"));
+        // Newer clients also send `signature` (a separate Ed25519 proof). Clients disagree on whether it belongs
+        // in the hashed string, so both readings are tried — each still has to produce the very same HMAC.
         var secret = System.Security.Cryptography.HMACSHA256.HashData("WebAppData"u8.ToArray(), Encoding.UTF8.GetBytes(botToken));
-        var expected = Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(secret, Encoding.UTF8.GetBytes(check)));
-        if (!expected.Equals(hash, StringComparison.OrdinalIgnoreCase)) return null;
+        var withSignature = CheckString(pairs);
+        var withoutSignature = CheckString(pairs.Where(p => p.Key != "signature"));
+        if (!Matches(secret, withoutSignature, hash) && !Matches(secret, withSignature, hash)) return null;
 
         // Stale data is as good as forged: a page kept open for days shouldn't keep proving who its user is.
         if (pairs.TryGetValue("auth_date", out var authDate) && long.TryParse(authDate, out var seconds)
@@ -141,13 +161,23 @@ public partial class TelegramBotApi(IHttpClientFactory factory, IConfiguration c
             : null;
     }
 
+    static string CheckString(IEnumerable<KeyValuePair<string, string>> pairs) =>
+        string.Join('\n', pairs.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}"));
+
+    static bool Matches(byte[] secret, string check, string hash) =>
+        Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(secret, Encoding.UTF8.GetBytes(check)))
+            .Equals(hash, StringComparison.OrdinalIgnoreCase);
+
     public record UpdateDto(
         [property: JsonPropertyName("update_id")] long UpdateId,
         MessageDto? Message);
 
-    public record MessageDto(ChatDto Chat, SenderDto? From, string? Text);
+    public record MessageDto(ChatDto Chat, SenderDto? From, string? Text, ContactDto? Contact);
     public record ChatDto(long Id);
     public record SenderDto([property: JsonPropertyName("first_name")] string? FirstName);
+    public record ContactDto(
+        [property: JsonPropertyName("phone_number")] string? PhoneNumber,
+        [property: JsonPropertyName("first_name")] string? FirstName);
 
     /// <summary>
     /// Asks Telegram for new messages. Used for bots we can't give a webhook to — a shop running on a local

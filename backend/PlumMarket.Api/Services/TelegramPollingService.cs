@@ -48,8 +48,7 @@ public class TelegramPollingService(IServiceScopeFactory scopes, TelegramBotApi 
             foreach (var update in updates)
             {
                 _offsets[store.Id] = update.UpdateId + 1;
-                if (update.Message is { Chat.Id: var chatId } message)
-                    await greeter.ReplyAsync(store, chatId, message.From?.FirstName, message.Text, stopping);
+                if (update.Message is { } message) await greeter.HandleAsync(store, message, stopping);
             }
         }
         return stores.Count;

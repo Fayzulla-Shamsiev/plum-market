@@ -1,4 +1,3 @@
-using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PlumMarket.Api.Data;
@@ -15,10 +14,7 @@ namespace PlumMarket.Api.Controllers;
 [Route("api/telegram")]
 public class TelegramWebhookController(AppDbContext db, TelegramGreeter greeter) : ControllerBase
 {
-    public record Update(Message? Message);
-    public record Message(Chat Chat, Sender? From, string? Text);
-    public record Chat(long Id, string? Type);
-    public record Sender([property: JsonPropertyName("first_name")] string? FirstName);
+    public record Update(TelegramBotApi.MessageDto? Message);
 
     [HttpPost("{storeId:int}")]
     public async Task<IActionResult> Post(int storeId, [FromBody] Update update)
@@ -30,8 +26,7 @@ public class TelegramWebhookController(AppDbContext db, TelegramGreeter greeter)
             || !CryptoEquals(secret, expected))
             return Unauthorized();
 
-        if (update.Message is { Chat.Id: var chatId } message)
-            await greeter.ReplyAsync(store, chatId, message.From?.FirstName, message.Text);
+        if (update.Message is { } message) await greeter.HandleAsync(store, message);
         return Ok();
     }
 

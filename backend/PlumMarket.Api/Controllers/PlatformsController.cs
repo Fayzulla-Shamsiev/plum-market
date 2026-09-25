@@ -17,7 +17,7 @@ public class PlatformsController(AppDbContext db, StoreContext tenant, TelegramB
 {
     public record WebsiteDto(string Name, string Slug, string Url, string? About, string? ReturnTerms);
     public record TelegramDto(string Username, string Name, string Url, DateTime? LinkedAt, string? Warning,
-        string ButtonUrl, bool ButtonIsFallback, bool Greets, string About, string Greeting);
+        string ButtonUrl, bool ButtonIsFallback, bool Greets, string About, string Greeting, int Subscribers);
     public record PlatformsDto(WebsiteDto Website, TelegramDto? Telegram);
 
     [HttpGet]
@@ -148,6 +148,7 @@ public class PlatformsController(AppDbContext db, StoreContext tenant, TelegramB
     PlatformsDto Dto()
     {
         var s = tenant.Store!;
+        var subscribers = db.Customers.Count(c => c.TelegramChatId != null);
         var settings = db.Settings.AsNoTracking().First();
         return new PlatformsDto(
             new WebsiteDto(s.Name, s.Slug, links.ShopUrl(s), settings.AboutText, settings.ReturnTerms),
@@ -155,7 +156,8 @@ public class PlatformsController(AppDbContext db, StoreContext tenant, TelegramB
                 ? new TelegramDto(username, s.BotName ?? username, StoreLinks.BotUrl(s)!, s.BotLinkedAt, s.BotWarning,
                     links.MiniAppUrl(s), links.IsFallback(s), Greets: true,
                     About: s.BotAbout ?? TelegramGreeter.DefaultAbout(s.Name),
-                    Greeting: s.BotGreeting ?? TelegramGreeter.DefaultGreeting(s.Name))
+                    Greeting: s.BotGreeting ?? TelegramGreeter.DefaultGreeting(s.Name),
+                    Subscribers: subscribers)
                 : null);
     }
 

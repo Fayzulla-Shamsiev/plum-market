@@ -9,7 +9,7 @@ namespace PlumMarket.Api.Controllers;
 /// <summary>Storefront account: sign in by phone + name, profile basics, saved delivery addresses.</summary>
 [ApiController]
 [Route("api/shop/account")]
-public class ShopAccountController(AppDbContext db, ShopAuth auth, StoreContext tenant) : ControllerBase
+public class ShopAccountController(AppDbContext db, ShopAuth auth, StoreContext tenant, ILogger<ShopAccountController> log) : ControllerBase
 {
     public record TelegramBody(string InitData);
 
@@ -25,7 +25,13 @@ public class ShopAccountController(AppDbContext db, ShopAuth auth, StoreContext 
         if (tenant.Store?.BotToken is not { Length: > 0 } token) return Ok(new { linked = false });
 
         var chatId = TelegramBotApi.VerifiedUserId(token, body.InitData ?? "");
-        if (chatId is null) return Ok(new { linked = false });
+        if (chatId is null)
+        {
+            // Not fatal — the bot also offers «Получать статусы заказов» — but worth seeing in the log.
+            log.LogWarning("Mini App launch data rejected for customer {CustomerId} (length {Length})",
+                customer.Id, body.InitData?.Length ?? 0);
+            return Ok(new { linked = false });
+        }
 
         if (customer.TelegramChatId != chatId)
         {

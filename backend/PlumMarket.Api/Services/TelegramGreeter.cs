@@ -1,12 +1,16 @@
+using Microsoft.EntityFrameworkCore;
+using PlumMarket.Api.Data;
 using PlumMarket.Api.Domain;
 
 namespace PlumMarket.Api.Services;
 
 /// <summary>
-/// What the merchant's bot answers a customer: a greeting and the button that opens that shop inside Telegram.
-/// Both ways of hearing from Telegram — the webhook and polling — end up here, so the bot says the same thing.
+/// What the merchant's bot says to a customer: a greeting, the button that opens that shop inside Telegram, and
+/// an offer to receive order updates here. Both ways of hearing from Telegram — the webhook and polling — end up
+/// here, so the bot behaves the same either way.
 /// </summary>
-public class TelegramGreeter(TelegramBotApi telegram, StoreLinks links, ILogger<TelegramGreeter> log)
+public class TelegramGreeter(AppDbContext db, StoreContext tenant, TelegramBotApi telegram, StoreLinks links,
+    ILogger<TelegramGreeter> log)
 {
     /// <summary>The greeting a store starts with, until the administrator writes their own.</summary>
     public static string DefaultGreeting(string storeName) =>
@@ -29,16 +33,66 @@ public class TelegramGreeter(TelegramBotApi telegram, StoreLinks links, ILogger<
         return rendered.Trim();
     }
 
-    public async Task ReplyAsync(Store store, long chatId, string? firstName, string? text, CancellationToken ct = default)
+    /// <summary>Answers whatever the customer sent: a shared phone number, or anything else.</summary>
+    public async Task HandleAsync(Store store, TelegramBotApi.MessageDto message, CancellationToken ct = default)
     {
-        if (store.BotToken is not { Length: > 0 } token) return;
+        if (store.BotToken is not { Length: > 0 }) return;
+        // Telegram calls us outside any request, so nothing has said which store this is yet. Without it the
+        // per-store filter would hide every customer and a new one would belong to no shop.
+        tenant.StoreId ??= store.Id;
+        tenant.Store ??= store;
+        var chatId = message.Chat.Id;
+
+        if (message.Contact?.PhoneNumber is { Length: > 0 } phone)
+        {
+            await LinkByPhoneAsync(store, chatId, phone, message.Contact.FirstName ?? message.From?.FirstName, ct);
+            return;
+        }
 
         var template = store.BotGreeting is { Length: > 0 } custom ? custom : DefaultGreeting(store.Name);
-        var body = Render(template, firstName, store.Name);
+        // Ask for the number only while we don't know who this chat belongs to.
+        var known = await db.Customers.AnyAsync(c => c.TelegramChatId == chatId, ct);
+        await SendAsync(store, chatId, Render(template, message.From?.FirstName, store.Name), askForPhone: !known, ct);
+    }
 
+    /// <summary>
+    /// Ties this chat to the customer with that number, so order updates can reach them here. A number we
+    /// haven't seen becomes a customer straight away — they'll be recognised when they order.
+    /// </summary>
+    async Task LinkByPhoneAsync(Store store, long chatId, string rawPhone, string? firstName, CancellationToken ct)
+    {
+        if (Phone.Normalize(rawPhone) is not { } phone)
+        {
+            await SendAsync(store, chatId, "Не удалось прочитать номер. Попробуйте ещё раз.", askForPhone: true, ct);
+            return;
+        }
+
+        var customer = await db.Customers.FirstOrDefaultAsync(c => c.Phone == phone, ct);
+        if (customer is null)
+        {
+            customer = new Customer
+            {
+                FullName = string.IsNullOrWhiteSpace(firstName) ? "Покупатель" : firstName.Trim(),
+                Phone = phone,
+                Platform = Platform.Telegram,
+                CreatedAt = DateTime.Now,
+                LastVisitAt = DateTime.Now,
+            };
+            db.Customers.Add(customer);
+        }
+        customer.TelegramChatId = chatId;
+        await db.SaveChangesAsync(ct);
+
+        await SendAsync(store, chatId,
+            $"Готово! Статусы заказов по номеру {phone} будут приходить сюда.", askForPhone: false, ct);
+    }
+
+    async Task SendAsync(Store store, long chatId, string text, bool askForPhone, CancellationToken ct)
+    {
         try
         {
-            await telegram.SendShopMessageAsync(token, chatId, body, "🛍 Открыть магазин", links.MiniAppUrl(store), ct);
+            await telegram.SendShopMessageAsync(store.BotToken!, chatId, text, "🛍 Открыть магазин",
+                links.MiniAppUrl(store), askForPhone, ct);
         }
         catch (Exception e)
         {
