@@ -56,7 +56,7 @@ watch(() => route.fullPath, () => {
 })
 // The storefront and the sign-in pages bring their own layout; only the panel gets the sidebar.
 const isShop = computed(() => !!route.matched[0]?.meta.shop)
-const bare = computed(() => isShop.value || !!route.meta.open)
+const bare = computed(() => isShop.value || !!route.meta.open || !!route.meta.bare)
 // The unread-chat badge belongs to the admin sidebar, so polling starts on the first admin page only.
 const stopAdminWatch = watch(() => route.matched.length && !bare.value, admin => {
   if (!admin) return
@@ -120,6 +120,10 @@ async function signOut() {
         </template>
       </nav>
       <div class="sidebar-foot">
+        <RouterLink to="/assistant" class="ai-link">
+          <Icon name="sparkles" />
+          <span>ИИ-помощник</span>
+        </RouterLink>
         <RouterLink :to="storefront" class="shop-link">Открыть магазин ↗</RouterLink>
         <div class="account">
           <span class="who">
@@ -172,6 +176,12 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .badge-count.new { background: #1fae66; }
 .badge-count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #e34948; color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
 .shop-link { display: block; color: #dccbe8; font-weight: 600; }
+.ai-link {
+  display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 9px; font-size: 13.5px; font-weight: 600;
+  color: #fff; background: linear-gradient(135deg, rgb(255 255 255 / 14%), rgb(255 255 255 / 6%)); border: 1px solid rgb(255 255 255 / 14%);
+}
+.ai-link:hover { background: rgb(255 255 255 / 18%); text-decoration: none; }
+.ai-link svg { width: 16px; height: 16px; color: #f3c8ff; }
 .sidebar-foot { margin-top: auto; padding: 16px 10px 0; font-size: 12px; color: #85709a; display: flex; flex-direction: column; gap: 10px; }
 .account { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid rgb(255 255 255 / 12%); }
 .who { display: flex; flex-direction: column; min-width: 0; }

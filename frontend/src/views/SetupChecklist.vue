@@ -27,6 +27,7 @@ const show = computed(() => !!setup.value && setup.value.orders === 0 && left.va
     <div class="setup-head">
       <h2>Первые шаги</h2>
       <span class="card-sub">Осталось {{ left }} из {{ steps.length }} — потом магазин можно открывать покупателям</span>
+      <RouterLink to="/assistant" class="btn btn-sm btn-primary ai"><Icon name="sparkles" />Настроить с ИИ-помощником</RouterLink>
       <a v-if="setup.slug" class="btn btn-sm" :href="`/shop/${setup.slug}`" target="_blank" rel="noopener">
         <Icon name="branches" />Посмотреть магазин
       </a>
@@ -46,7 +47,8 @@ const show = computed(() => !!setup.value && setup.value.orders === 0 && left.va
 <style scoped>
 .setup { margin-bottom: 16px; }
 .setup-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.setup-head .btn { margin-left: auto; }
+.setup-head .ai { margin-left: auto; }
+.setup-head .ai:hover { text-decoration: none; }
 ol { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 0; padding: 0; }
 li { display: flex; gap: 10px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
 li.done { background: var(--good-bg); border-color: transparent; }

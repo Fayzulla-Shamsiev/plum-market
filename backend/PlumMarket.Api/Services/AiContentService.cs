@@ -37,12 +37,15 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
     /// Uzbek is where these models slip: they reach for a Turkish word or transliterate the Russian one.
     /// Naming the trap is what makes "миндаль" come out as "bodom" rather than "badem" or "minal".
     /// </summary>
-    const string UzbekRule =
+    internal const string UzbekRule =
         "Uzbek must be the Uzbek of Uzbekistan, not Turkish and not transliterated Russian: use the everyday " +
         "word a shopper in Tashkent would use — bodom (almond), qovoq (pumpkin), yongʻoq (walnut), qaymoq " +
-        "(cream), sariyogʻ (butter), asal (honey), tovuq (chicken), goʻsht (meat), xamir (dough), somsa (not " +
+        "(cream), sariyogʻ (butter), asal (honey), tovuq (chicken), goʻsht (meat), xamir (dough), non (лепёшка, not " +
+        "\"lepyoshka\"), qarsildoq (хрустящий), somsa (not " +
         "\"samsa\"), non (bread), qahva (coffee), kartoshka, piyoz. If you are unsure of an ingredient's Uzbek " +
-        "name, use the culinary term an Uzbek bakery menu would print. Never invent a word from the Russian " +
+        "name, use the culinary term an Uzbek bakery menu would print. Never leave a Russian ending (-ый, -ой, " +
+        "-ая, -ое) or a half-translated Russian word in Uzbek: «демисезонная куртка» is «mavsumiy kurtka», not " +
+        "\"demisezonnoy kurtka\". Never invent a word from the Russian " +
         "one, and re-read the result as a native speaker would.";
 
     static readonly Dictionary<string, string> LanguageNames = new()
@@ -242,6 +245,80 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
         if (content.TryGetProperty("refusal", out var refusal) && refusal.ValueKind == JsonValueKind.String)
             throw new InvalidOperationException("запрос отклонён моделью");
         return JsonDocument.Parse(content.GetProperty("content").GetString() ?? "{}").RootElement.Clone();
+    }
+
+    /// <summary>
+    /// One turn of a tool-using conversation (the setup assistant). <paramref name="messages"/> and
+    /// <paramref name="tools"/> are already in OpenAI's chat format; the reply's message object comes back as is,
+    /// so the caller can run its tool calls. Same key, same rules: attached here and nowhere else, never logged.
+    /// </summary>
+    public async Task<JsonElement> ChatAsync(IEnumerable<object> messages, IEnumerable<object> tools,
+        object? responseFormat, CancellationToken ct)
+    {
+        if (ApiKey is not { } key) throw new InvalidOperationException("ключ OpenAI не настроен");
+
+        // The setup assistant follows a long playbook and many tools, where the full model is noticeably more
+        // reliable than the mini one used for catalog texts. Overridable with OpenAI:AssistantModel.
+        var model = config["OpenAI:AssistantModel"] is { Length: > 0 } m ? m : "gpt-4.1";
+        var body = await SendChatAsync(key, model, messages, tools, responseFormat, ct);
+
+        // An account's tokens-per-minute limit for the big model is small (30 000 on a new account) and one turn can
+        // take a good part of it: wait the moment OpenAI asks for and try again, then fall back to the mini model,
+        // which has a much larger limit — a slightly weaker answer beats an error in the middle of the setup.
+        if (body.Status == System.Net.HttpStatusCode.TooManyRequests && !body.Text.Contains("insufficient_quota"))
+        {
+            if (RetryAfter(body.Text) is { } wait && wait <= TimeSpan.FromSeconds(6))
+            {
+                await Task.Delay(wait + TimeSpan.FromMilliseconds(250), ct);
+                body = await SendChatAsync(key, model, messages, tools, responseFormat, ct);
+            }
+            if (body.Status == System.Net.HttpStatusCode.TooManyRequests && model != Model)
+            {
+                log.LogInformation("OpenAI rate limit on {Model}, falling back to {Fallback}", model, Model);
+                body = await SendChatAsync(key, Model, messages, tools, responseFormat, ct);
+            }
+        }
+
+        if (body.Status != System.Net.HttpStatusCode.OK)
+        {
+            log.LogWarning("OpenAI {Status}: {Body}", (int)body.Status, Trim(body.Text));
+            throw new InvalidOperationException(Explain(body.Status, body.Text));
+        }
+        return JsonDocument.Parse(body.Text).RootElement.GetProperty("choices")[0].GetProperty("message").Clone();
+    }
+
+    async Task<(System.Net.HttpStatusCode Status, string Text)> SendChatAsync(string key, string model,
+        IEnumerable<object> messages, IEnumerable<object> tools, object? responseFormat, CancellationToken ct)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["model"] = model,
+            ["messages"] = messages,
+            ["tools"] = tools,
+            // Strict tool schemas and parallel calls don't mix; one call per round, arrays inside a call instead.
+            ["parallel_tool_calls"] = false,
+            ["temperature"] = 0.4,
+        };
+        if (responseFormat is not null) payload["response_format"] = responseFormat;
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+
+        using var client = factory.CreateClient(nameof(AiContentService));
+        using var response = await client.SendAsync(request, ct);
+        return (response.StatusCode, await response.Content.ReadAsStringAsync(ct));
+    }
+
+    /// <summary>"Please try again in 752ms" / "in 1.3s" from a rate-limit message.</summary>
+    static TimeSpan? RetryAfter(string body)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(body, @"try again in (\d+(?:\.\d+)?)(ms|s)");
+        if (!match.Success || !double.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var v)) return null;
+        return match.Groups[2].Value == "ms" ? TimeSpan.FromMilliseconds(v) : TimeSpan.FromSeconds(v);
     }
 
     /// <summary>What the merchant sees. OpenAI's own wording is for the log, not for a catalog form.</summary>

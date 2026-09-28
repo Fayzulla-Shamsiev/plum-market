@@ -9,6 +9,18 @@ namespace PlumMarket.Api.Data;
 /// </summary>
 public static class StoreProvisioner
 {
+    // The template's placeholders. The setup assistant compares against them to tell a filled-in store from a
+    // fresh one, so they are named here rather than repeated.
+    public const string DefaultHours = "Ежедневно 09:00\u201321:00";
+    public const long DefaultDeliveryFee = 15_000;
+    public const long DefaultFreeDeliveryFrom = 200_000;
+    public const string AboutPlaceholder = "Расскажите здесь о себе";
+    public const string ReturnsPlaceholder = "Опишите здесь свои условия возврата";
+    public const string DefaultDeliveryTerms =
+        "## Самовывоз\nБесплатно из филиала магазина. Когда заказ будет собран, в разделе «Мои заказы» " +
+        "появится статус «Готов к выдаче».\n\n## Доставка\nКурьер привезёт заказ в течение дня. Стоимость доставки " +
+        "и сумма бесплатной доставки настраиваются в админ-панели.\n\n## Оплата\nНаличными при получении.";
+
     public static void Provision(AppDbContext db, Store store, AdminUser admin)
     {
         db.Settings.Add(new StoreSettings
@@ -16,22 +28,20 @@ public static class StoreProvisioner
             StoreId = store.Id,
             StoreName = store.Name,
             Phone = admin.Phone,
-            WorkingHours = "Ежедневно 09:00\u201321:00",
+            WorkingHours = DefaultHours,
             StoreDomain = $"{store.Slug}.plum.uz",
             Languages = "ru,uz",
             BonusEnabled = false,
             SpendPerPoint = 100,
             OverdueMinutes = 90,
-            DeliveryFee = 15_000,
-            FreeDeliveryFrom = 200_000,
-            AboutText = $"{store.Name} \u2014 интернет-магазин. Расскажите здесь о себе: чем вы занимаетесь, " +
+            DeliveryFee = DefaultDeliveryFee,
+            FreeDeliveryFrom = DefaultFreeDeliveryFrom,
+            AboutText = $"{store.Name} \u2014 интернет-магазин. {AboutPlaceholder}: чем вы занимаетесь, " +
                 "что продаёте и почему у вас стоит покупать. Текст меняется в разделе «Платформы → Веб-сайт».",
-            DeliveryTerms = "## Самовывоз\nБесплатно из филиала магазина. Когда заказ будет собран, в разделе «Мои заказы» " +
-                "появится статус «Готов к выдаче».\n\n## Доставка\nКурьер привезёт заказ в течение дня. Стоимость доставки " +
-                "и сумма бесплатной доставки настраиваются в админ-панели.\n\n## Оплата\nНаличными при получении.",
+            DeliveryTerms = DefaultDeliveryTerms,
             ReturnTerms = "## Отмена заказа\nПока магазин не подтвердил заказ (статус «Новый»), покупатель может отменить его сам " +
                 "в разделе «Мои заказы». После подтверждения отмена возможна только через магазин.\n\n## Возврат и обмен\n" +
-                "Опишите здесь свои условия возврата: в какой срок принимаете товар обратно и что для этого нужно.",
+                $"{ReturnsPlaceholder}: в какой срок принимаете товар обратно и что для этого нужно.",
         });
 
         // A store needs at least one branch: stock, pickup and delivery are counted per branch.
@@ -41,7 +51,7 @@ public static class StoreProvisioner
             Name = "Основной филиал",
             Address = "",
             Phone = admin.Phone,
-            WorkingHours = "Ежедневно 09:00\u201321:00",
+            WorkingHours = DefaultHours,
             // Centre of Tashkent until the administrator moves the pin on the map.
             Lat = 41.3111,
             Lng = 69.2797,

@@ -8,7 +8,7 @@ namespace PlumMarket.Api.Controllers;
 
 /// <summary>
 /// Вход и регистрация администратора:
-/// новый — имя → номер телефона → пароль → аккаунт и магазин → админ-панель;
+/// новый — имя → номер телефона → пароль → аккаунт и магазин → ИИ-помощник, который настраивает магазин вместе с ним;
 /// существующий — номер телефона → пароль → админ-панель своего магазина.
 /// The new store is a website from the first second; a Telegram bot is connected later in Платформы.
 /// </summary>
@@ -20,7 +20,8 @@ public class AuthController(AppDbContext db, AdminAuth auth, StoreLinks links) :
     public record LoginRequest(string Phone, string Password);
     public record Session(string Token, AdminDto Admin);
     public record AdminDto(int Id, string Name, string Phone, StoreDto Store);
-    public record StoreDto(int Id, string Name, string Slug, string Url);
+    /// <param name="Onboarded">False until the first-run setup with the AI assistant is finished or skipped.</param>
+    public record StoreDto(int Id, string Name, string Slug, string Url, bool Onboarded);
 
     [HttpPost("register")]
     public async Task<ActionResult<Session>> Register(RegisterRequest req)
@@ -91,7 +92,7 @@ public class AuthController(AppDbContext db, AdminAuth auth, StoreLinks links) :
         return NoContent();
     }
 
-    AdminDto Dto(AdminUser a) => new(a.Id, a.Name, a.Phone, new StoreDto(a.Store.Id, a.Store.Name, a.Store.Slug, links.ShopUrl(a.Store)));
+    AdminDto Dto(AdminUser a) => new(a.Id, a.Name, a.Phone, new StoreDto(a.Store.Id, a.Store.Name, a.Store.Slug, links.ShopUrl(a.Store), a.Store.OnboardedAt is not null));
 
     ActionResult<Session> Error(string message, string field) => BadRequest(new { error = message, field });
 }

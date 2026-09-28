@@ -36,7 +36,8 @@ public static class DemoData
         var rnd = new Random(42); // deterministic: the same demo every time
         var now = DateTime.Now;
 
-        var store = new Store { Name = StoreName, Slug = StoreSlug, CreatedAt = now.AddDays(-400) };
+        // Long past its first-run setup: the demo admin lands on the dashboard, not in the assistant.
+        var store = new Store { Name = StoreName, Slug = StoreSlug, CreatedAt = now.AddDays(-400), OnboardedAt = now.AddDays(-400) };
         db.Stores.Add(store);
         db.SaveChanges();
         // Everything added from here belongs to the demo store (AppDbContext stamps it).

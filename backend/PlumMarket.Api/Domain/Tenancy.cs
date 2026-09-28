@@ -43,6 +43,43 @@ public class Store
     /// whether the bot is answering /start at all: no secret, no webhook (a local run has no public address).
     /// </summary>
     public string? BotWebhookSecret { get; set; }
+
+    // --- First run: the AI assistant that sets the shop up together with the administrator ---
+    /// <summary>
+    /// When the administrator finished (or skipped) the setup conversation. Until then signing in opens the
+    /// assistant rather than the panel.
+    /// </summary>
+    public DateTime? OnboardedAt { get; set; }
+    /// <summary>
+    /// Setup steps the administrator explicitly accepted as they are (e.g. the default delivery price), comma
+    /// separated. Steps that can be read off the data (a catalog, a branch address) are never stored here.
+    /// </summary>
+    public string SetupAccepted { get; set; } = "";
+}
+
+/// <summary>
+/// One message of the setup assistant's conversation with the administrator. Kept in OpenAI's shape (role,
+/// tool calls, tool results) so the conversation can be continued after a reload; only user and assistant
+/// messages with text are shown in the panel.
+/// </summary>
+public class AssistantMessage : IStoreOwned
+{
+    public int StoreId { get; set; }
+    public int Id { get; set; }
+    /// <summary>user | assistant | tool</summary>
+    public string Role { get; set; } = "";
+    public string Content { get; set; } = "";
+    /// <summary>Quick replies the assistant offers under its message (JSON array of strings).</summary>
+    public string? Suggestions { get; set; }
+    /// <summary>The assistant's tool calls, exactly as OpenAI returned them (JSON array).</summary>
+    public string? ToolCalls { get; set; }
+    /// <summary>For a tool result: which call it answers.</summary>
+    public string? ToolCallId { get; set; }
+    /// <summary>What a tool did, for the card the panel shows under the answer (JSON object).</summary>
+    public string? Card { get; set; }
+    /// <summary>Uploaded images the administrator attached (JSON array of /uploads URLs).</summary>
+    public string? Attachments { get; set; }
+    public DateTime CreatedAt { get; set; }
 }
 
 /// <summary>The entrepreneur who registered the store and signs in to its admin panel.</summary>

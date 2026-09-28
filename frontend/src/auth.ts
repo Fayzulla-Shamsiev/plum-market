@@ -9,6 +9,8 @@ export interface AdminStore {
   slug: string
   /** Where customers open this shop on the web. */
   url: string
+  /** False until the first-run setup with the AI assistant is finished or skipped. */
+  onboarded: boolean
 }
 export interface Admin { id: number; name: string; phone: string; store: AdminStore }
 

@@ -50,6 +50,9 @@ export const router = createRouter({
       ],
     },
 
+    // ---- ИИ-помощник: where a new administrator lands after registration (full screen, no sidebar) ----
+    { path: '/assistant', component: () => import('./views/assistant/AssistantView.vue'), meta: { bare: true } },
+
     // ---- Merchant admin ----
     { path: '/dashboard', component: DashboardView },
     { path: '/orders', component: OrdersView },

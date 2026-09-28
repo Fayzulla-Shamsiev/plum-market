@@ -1,18 +1,37 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { api, chatApi, type Lookups } from './api'
+import { adminToken } from './auth'
 
 // Reference data (branches, employees, store info) is loaded once and shared across views.
 const lookups = ref<Lookups | null>(null)
 let pending: Promise<void> | null = null
 
+function load() {
+  pending = api.lookups()
+    .then(l => {
+      lookups.value = l
+      // The remembered branch may belong to a store this browser was signed in to before: its products would all
+      // look missing. Anything that isn't one of this store's branches falls back to «Все филиалы».
+      if (catalogBranch.value !== '' && !l.branches.some(b => b.id === catalogBranch.value)) setCatalogBranch('')
+    })
+    .catch(() => { pending = null })
+  return pending
+}
+
 export function useLookups() {
-  if (!lookups.value && !pending) {
-    pending = api.lookups()
-      .then(l => { lookups.value = l })
-      .catch(() => { pending = null })
-  }
+  if (!lookups.value && !pending) load()
   return { lookups }
 }
+
+/** Reloads branches and store info after something changed them (e.g. the AI assistant added a branch). */
+export const refreshLookups = () => load()
+
+// Signing out and into another store must not keep the previous store's branches, name or selected branch.
+watch(adminToken, () => {
+  lookups.value = null
+  pending = null
+  setCatalogBranch('')
+})
 
 export function botLink(username?: string) {
   return username ? `https://t.me/${username}` : '#'

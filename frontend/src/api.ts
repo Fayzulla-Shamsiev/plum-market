@@ -217,6 +217,55 @@ export interface Platforms {
   telegram: TelegramPlatform | null
 }
 
+// ---- ИИ-помощник: first-run setup of a new shop by conversation ----
+
+/** What a tool did, shown under the assistant's answer. */
+export interface AssistantCard {
+  /** change — something was saved; link — a button to a panel section; telegram — the bot token form; finish — setup done. */
+  /** availability — products just created, with branch checkboxes and quantity boxes. */
+  kind: 'change' | 'link' | 'telegram' | 'finish' | 'availability' | 'categories'
+  title: string
+  lines: string[] | null
+  link: string | null
+  linkLabel: string | null
+  productIds: number[] | null
+  categoryIds: number[] | null
+}
+
+/** Where each product is sold and how many are left there (the table under «Добавлено товаров»). */
+export interface Availability {
+  branches: { id: number; name: string }[]
+  products: { id: number; name: string; price: number; unit: string; imageUrl: string | null; stock: { branchId: number; status: StockStatus; quantity: number }[] }[]
+}
+/** quantity null = unlimited. */
+export type AvailabilityInput = { productId: number; branches: { branchId: number; quantity: number | null }[] }[]
+
+export interface AssistantMessage {
+  id: number
+  role: 'user' | 'assistant'
+  text: string
+  /** Quick replies offered under the assistant's latest message. */
+  suggestions: string[]
+  cards: AssistantCard[]
+  /** Images the administrator attached (/uploads/...). */
+  attachments: string[]
+  createdAt: string
+}
+
+export interface SetupStep { key: string; title: string; hint: string; done: boolean; optional: boolean; link: string }
+
+export interface AssistantState {
+  /** False when the server has no OpenAI key: the panel still works, the assistant doesn't. */
+  enabled: boolean
+  onboarded: boolean
+  storeName: string
+  shopUrl: string
+  messages: AssistantMessage[]
+  progress: SetupStep[]
+}
+
+export interface AssistantTurn { messages: AssistantMessage[]; progress: SetupStep[]; onboarded: boolean; storeName: string }
+
 export const api = {
   lookups: () => request<Lookups>('/api/lookups'),
   platforms: () => request<Platforms>('/api/platforms'),
@@ -230,6 +279,18 @@ export const api = {
   botText: (kind: 'about' | 'greeting', existing?: string) =>
     request<{ text: string }>('/api/ai/bot-text', { method: 'POST', body: JSON.stringify({ kind, existing }) }),
   setup: () => request<Setup>('/api/dashboard/setup'),
+  assistant: () => request<AssistantState>('/api/assistant'),
+  assistantSend: (text: string, attachments: string[]) =>
+    request<AssistantTurn>('/api/assistant/messages', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
+  assistantFinish: () => request<{ onboarded: boolean }>('/api/assistant/finish', { method: 'POST' }),
+  assistantReset: () => request<AssistantState>('/api/assistant', { method: 'DELETE' }),
+  availability: (ids: number[]) => request<Availability>(`/api/assistant/availability${qs({ ids: ids.join(',') })}`),
+  assistantCategories: (ids: number[]) =>
+    request<{ id: number; name: string; imageUrl: string | null; products: number }[]>(`/api/assistant/categories${qs({ ids: ids.join(',') })}`),
+  setPhoto: (kind: 'product' | 'category', id: number, url: string | null) =>
+    request<{ url: string | null }>('/api/assistant/photo', { method: 'PUT', body: JSON.stringify({ kind, id, url }) }),
+  saveAvailability: (items: AvailabilityInput) =>
+    request<Availability>('/api/assistant/availability', { method: 'PUT', body: JSON.stringify(items) }),
   dashboard: (q: Query) => request<Dashboard>(`/api/dashboard${qs(q)}`),
 
   orders: (q: Query) => request<OrdersPage>(`/api/orders${qs(q)}`),

@@ -5,7 +5,7 @@ import PhoneInput from '../../shop/components/PhoneInput.vue'
 import { AuthError, demo, loadDemo, login, register } from '../../auth'
 
 // Вход и регистрация администратора. One page, two modes:
-// новый — имя → номер телефона → пароль → аккаунт и магазин; существующий — номер телефона → пароль.
+// новый — имя → номер телефона → пароль → аккаунт и магазин → ИИ-помощник; существующий — номер телефона → пароль.
 // The new shop is a website right away; a Telegram bot is connected later in Платформы.
 const props = defineProps<{ mode: 'login' | 'register' }>()
 const route = useRoute()
@@ -46,9 +46,12 @@ async function submit() {
   busy.value = true
   try {
     const full = `+998${phone.value}`
-    if (isRegister.value) await register(name.value.trim(), full, password.value, storeName.value.trim())
-    else await login(full, password.value)
-    router.replace(next.value)
+    const signedIn = isRegister.value
+      ? await register(name.value.trim(), full, password.value, storeName.value.trim())
+      : await login(full, password.value)
+    // A new shop is set up together with the AI assistant, not in an empty panel — and a merchant who left that
+    // conversation half-way returns to it, unless they were heading for a particular page.
+    router.replace(!signedIn.store.onboarded && !route.query.next ? '/assistant' : next.value)
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Не удалось выполнить вход.'
     badField.value = e instanceof AuthError && e.field ? e.field : ''
@@ -82,7 +85,7 @@ function pretty(phone: string) {
 
 const perks = [
   { title: 'Готовый магазин', text: 'Сайт с каталогом, корзиной и оформлением заказа — сразу после регистрации.' },
-  { title: 'Всё в одной панели', text: 'Категории, товары, цены и фото. Изменения видны покупателям мгновенно.' },
+  { title: 'ИИ-помощник', text: 'Расскажите о своём бизнесе — помощник сам заполнит каталог, доставку и контакты и подскажет, что дальше.' },
   { title: 'Заказы по этапам', text: 'Подтверждение, сборка и доставка — клиент видит актуальный статус.' },
 ]
 </script>
