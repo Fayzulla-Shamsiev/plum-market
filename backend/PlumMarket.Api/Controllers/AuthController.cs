@@ -19,7 +19,8 @@ public class AuthController(AppDbContext db, AdminAuth auth, StoreLinks links) :
     public record RegisterRequest(string Name, string Phone, string Password, string? StoreName);
     public record LoginRequest(string Phone, string Password);
     public record Session(string Token, AdminDto Admin);
-    public record AdminDto(int Id, string Name, string Phone, StoreDto Store);
+    /// <param name="TourDone">False until the guided tour of the panel has been finished or skipped.</param>
+    public record AdminDto(int Id, string Name, string Phone, StoreDto Store, bool TourDone);
     /// <param name="Onboarded">False until the first-run setup with the AI assistant is finished or skipped.</param>
     public record StoreDto(int Id, string Name, string Slug, string Url, bool Onboarded);
 
@@ -85,6 +86,17 @@ public class AuthController(AppDbContext db, AdminAuth auth, StoreLinks links) :
                 picks.Take(4).ToList(), picks.Skip(2).Take(6).Reverse().ToList()));
     }
 
+    /// <summary>The guided tour was finished or skipped: it won't start by itself again, on any device.</summary>
+    [HttpPost("tour")]
+    public async Task<IActionResult> TourDone()
+    {
+        var admin = await auth.CurrentAsync(Request);
+        if (admin is null) return Unauthorized(new { error = "Войдите в панель управления.", code = "unauthorized" });
+        admin.TourCompletedAt ??= DateTime.Now;
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
     [HttpPost("logout")]
     public async Task<IActionResult> Logout()
     {
@@ -92,7 +104,9 @@ public class AuthController(AppDbContext db, AdminAuth auth, StoreLinks links) :
         return NoContent();
     }
 
-    AdminDto Dto(AdminUser a) => new(a.Id, a.Name, a.Phone, new StoreDto(a.Store.Id, a.Store.Name, a.Store.Slug, links.ShopUrl(a.Store), a.Store.OnboardedAt is not null));
+    AdminDto Dto(AdminUser a) => new(a.Id, a.Name, a.Phone,
+        new StoreDto(a.Store.Id, a.Store.Name, a.Store.Slug, links.ShopUrl(a.Store), a.Store.OnboardedAt is not null),
+        a.TourCompletedAt is not null);
 
     ActionResult<Session> Error(string message, string field) => BadRequest(new { error = message, field });
 }

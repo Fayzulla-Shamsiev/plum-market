@@ -28,6 +28,8 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
 {
     const int MaxRounds = 8;
     const int HistoryWindow = 60;
+    /// <summary>Texts longer than this are distilled into product cards before the assistant sees them.</summary>
+    const int DigestFrom = 700;
     static readonly JsonSerializerOptions Json = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public bool Enabled => ai.AiEnabled;
@@ -82,6 +84,12 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
 
         try
         {
+            // A pasted page of specs is distilled first (see AiContentService.DigestProductsAsync).
+            if (text.Length > DigestFrom && await ai.DigestProductsAsync(text, ct) is { } digest)
+            {
+                user.Digest = digest;
+                await db.SaveChangesAsync();
+            }
             await RunTurnAsync(user, images, ct);
         }
         catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -100,54 +108,78 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
         history.Reverse();
         history = Consistent(history);
 
-        var conversation = new List<object> { new { role = "system", content = await SystemPromptAsync() } };
-        conversation.AddRange(history.Select(ToOpenAi));
-        conversation.Add(CurrentUserMessage(user, images));
+        // Prices the model may save: what was said so far (see AssistantTools.KnownAmounts).
+        tools.KnownAmounts = history.Where(m => m.Role is "user" or "assistant").Select(m => m.Content).Append(user.Content)
+            .SelectMany(AssistantTools.Amounts).ToHashSet();
+        tools.Digests = history.Append(user).Where(m => m.Digest is not null)
+            .SelectMany(m => DigestCards(m).Select(c => (c.Ref, c.Card))).ToDictionary(x => x.Ref, x => x.Card);
+
+        // Photos sent one message earlier (typically: preview shown, now confirmed) are shown to the model again, so it
+        // assigns them to products by looking at them rather than by the order they came in.
+        var previousUser = history.LastOrDefault(m => m.Role == "user");
+        var earlierImages = images.Count == 0 && previousUser?.Attachments is { } att
+            ? (JsonSerializer.Deserialize<List<string>>(att) ?? []).Where(IsOwnImage).ToList()
+            : [];
+
+        var input = new List<object>();
+        foreach (var m in history)
+            if (m == previousUser && earlierImages.Count > 0) input.Add(UserInput(m, earlierImages));
+            else input.AddRange(ToInput(m));
+        input.Add(UserInput(user, images));
+        // More thinking where mistakes happen — long pasted texts and photos; quick answers for the rest.
+        var effort = user.Digest is not null || images.Count + earlierImages.Count > 0 || user.Content.Length > 400 ? "medium" : "low";
 
         var toolsRan = false;
         var nudged = false;
         for (var round = 0; round < MaxRounds; round++)
         {
-            var message = await ai.ChatAsync(conversation, AssistantTools.Definitions, ReplyFormat, ct);
-            var content = message.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+            // Fresh instructions every round: the model sees the shop as it is now, not as it was when the turn started.
+            var response = await ai.RespondAsync(await SystemPromptAsync(), input, AssistantTools.Definitions, ReplyFormat, effort, ct);
+            var output = response.GetProperty("output");
+            // Everything the model produced (its encrypted reasoning included) goes back in with the next round.
+            input.AddRange(output.EnumerateArray().Select(item => (object)item));
+            var calls = AiContentService.FunctionCalls(response);
+            var content = AiContentService.OutputText(response);
 
-            if (message.TryGetProperty("tool_calls", out var calls) && calls.ValueKind == JsonValueKind.Array && calls.GetArrayLength() > 0)
+            if (calls.Count > 0)
             {
-                var said = content is null ? null : ParseReply(content).Text;
+                // Stored in the Chat Completions shape the history already uses; ToInput turns it back into items.
+                var stored = calls.Select(c => new
+                {
+                    id = c.GetProperty("call_id").GetString(),
+                    type = "function",
+                    function = new { name = c.GetProperty("name").GetString(), arguments = c.GetProperty("arguments").GetString() },
+                }).ToList();
                 db.AssistantMessages.Add(new AssistantMessage
                 {
-                    Role = "assistant", Content = said ?? "", ToolCalls = calls.GetRawText(), CreatedAt = DateTime.Now,
+                    Role = "assistant", Content = content.Length > 0 ? ParseReply(content).Text : "",
+                    ToolCalls = JsonSerializer.Serialize(stored, Json), CreatedAt = DateTime.Now,
                 });
-                conversation.Add(new { role = "assistant", content, tool_calls = calls });
 
-                foreach (var call in calls.EnumerateArray())
+                foreach (var call in calls)
                 {
-                    var id = call.GetProperty("id").GetString() ?? "";
-                    var fn = call.GetProperty("function");
-                    var outcome = await tools.RunAsync(fn.GetProperty("name").GetString() ?? "", fn.GetProperty("arguments").GetString() ?? "{}");
+                    var id = call.GetProperty("call_id").GetString() ?? "";
+                    var outcome = await tools.RunAsync(call.GetProperty("name").GetString() ?? "", call.GetProperty("arguments").GetString() ?? "{}");
                     db.AssistantMessages.Add(new AssistantMessage
                     {
                         Role = "tool", ToolCallId = id, Content = outcome.Result, CreatedAt = DateTime.Now,
                         Card = outcome.Card is null ? null : JsonSerializer.Serialize(outcome.Card, Json),
                     });
-                    conversation.Add(new { role = "tool", tool_call_id = id, content = outcome.Result });
+                    input.Add(new { type = "function_call_output", call_id = id, output = outcome.Result });
                 }
                 toolsRan = true;
                 await db.SaveChangesAsync();
-                // The model sees the shop as it is now, not as it was when the turn started.
-                conversation[0] = new { role = "system", content = await SystemPromptAsync() };
                 continue;
             }
 
-            var reply = ParseReply(content ?? "");
+            var reply = ParseReply(content);
             // "Сохранил / добавлю" with no tool call means nothing happened — the model gets one chance to act on it.
             if (!toolsRan && !nudged && round < MaxRounds - 1 && ClaimsAction().IsMatch(reply.Text))
             {
                 nudged = true;
-                conversation.Add(new { role = "assistant", content });
-                conversation.Add(new
+                input.Add(new
                 {
-                    role = "system",
+                    role = "developer",
                     content = "Your reply says something was (or will be) saved, added or created, but you called no tool, so " +
                               "nothing changed. If the administrator already gave the data, call the tool now and then answer. " +
                               "If you are waiting for their confirmation, rewrite the reply as a question without claiming anything was done.",
@@ -221,12 +253,10 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
     static readonly object ReplyFormat = new
     {
         type = "json_schema",
-        json_schema = new
+        name = "assistant_reply",
+        strict = true,
+        schema = new
         {
-            name = "assistant_reply",
-            strict = true,
-            schema = new
-            {
                 type = "object",
                 properties = new
                 {
@@ -240,7 +270,6 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
                 },
                 required = new[] { "message", "suggestions" },
                 additionalProperties = false,
-            },
         },
     };
 
@@ -284,47 +313,92 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
     [GeneratedRegex(@"(ул\.|улиц|проспект|пр-т|переул|массив|квартал|дом\s*\d|\bд\.\s*\d|\d+\s*(-?й)?\s*кв|\+?\d[\d\s()-]{7,}|\d[\d\s]*\s*(сум|so'm|soʻm|uzs)|https?://|\.uz\b|\.com\b)", RegexOptions.IgnoreCase)]
     private static partial Regex MadeUpFact();
 
-    object ToOpenAi(AssistantMessage m) => m.Role switch
+    /// <summary>A stored message as Responses API input items (a tool round is one call item per function call).</summary>
+    static IEnumerable<object> ToInput(AssistantMessage m)
     {
-        "tool" => new { role = "tool", tool_call_id = m.ToolCallId, content = m.Content },
-        "assistant" when m.ToolCalls is not null => new
+        switch (m.Role)
         {
-            role = "assistant",
-            content = m.Content.Length > 0 ? m.Content : null,
-            tool_calls = JsonDocument.Parse(m.ToolCalls).RootElement,
-        },
-        // Earlier answers are replayed in the same JSON shape the model is asked to answer in.
-        "assistant" => new
-        {
-            role = "assistant",
-            content = JsonSerializer.Serialize(new
-            {
-                message = m.Content.TrimStart().StartsWith('{') ? ParseReply(m.Content).Text : m.Content,
-                suggestions = m.Suggestions is null ? [] : JsonSerializer.Deserialize<List<string>>(m.Suggestions) ?? [],
-            }, Json),
-        },
-        _ => new { role = "user", content = WithAttachmentNote(m) },
-    };
+            case "tool":
+                yield return new { type = "function_call_output", call_id = m.ToolCallId, output = m.Content };
+                break;
+            case "assistant" when m.ToolCalls is not null:
+                if (m.Content.Length > 0) yield return new { role = "assistant", content = m.Content };
+                foreach (var call in JsonDocument.Parse(m.ToolCalls).RootElement.EnumerateArray())
+                {
+                    var fn = call.GetProperty("function");
+                    yield return new
+                    {
+                        type = "function_call",
+                        call_id = call.GetProperty("id").GetString(),
+                        name = fn.GetProperty("name").GetString(),
+                        arguments = fn.GetProperty("arguments").GetString(),
+                    };
+                }
+                break;
+            case "assistant":
+                // Earlier answers are replayed in the same JSON shape the model is asked to answer in.
+                yield return new
+                {
+                    role = "assistant",
+                    content = JsonSerializer.Serialize(new
+                    {
+                        message = m.Content.TrimStart().StartsWith('{') ? ParseReply(m.Content).Text : m.Content,
+                        suggestions = m.Suggestions is null ? [] : JsonSerializer.Deserialize<List<string>>(m.Suggestions) ?? [],
+                    }, Json),
+                };
+                break;
+            default:
+                yield return new { role = "user", content = WithAttachmentNote(m) };
+                break;
+        }
+    }
+
+    /// <summary>The digest's product cards with their refs («D48.1»), as the model and create_products_from_digest see them.</summary>
+    static IEnumerable<(string Ref, JsonElement Card)> DigestCards(AssistantMessage m)
+    {
+        using var doc = JsonDocument.Parse(m.Digest!);
+        var i = 0;
+        foreach (var card in doc.RootElement.GetProperty("products").EnumerateArray())
+            yield return ($"D{m.Id}.{++i}", card.Clone());
+    }
 
     static string WithAttachmentNote(AssistantMessage m)
     {
-        if (m.Attachments is null) return m.Content;
+        var content = m.Digest is null ? m.Content
+            : $"{Short(m.Content, 300)}\n\n[Администратор прислал длинный текст ({m.Content.Length} символов). Из него " +
+              "автоматически собраны карточки товаров (ниже, у каждой ref). Создавай их ТОЛЬКО через " +
+              "create_products_from_digest по ref — сервер скопирует поля сами; передавай лишь то, что администратор добавил " +
+              "или изменил, и фото. Перед созданием покажи короткое превью и спроси недостающее (поле missing).]\n" +
+              JsonSerializer.Serialize(new
+              {
+                  cards = DigestCards(m).Select(c => new { @ref = c.Ref, card = c.Card }),
+                  missing = JsonDocument.Parse(m.Digest!).RootElement.TryGetProperty("missing", out var missing) ? (object)missing.Clone() : Array.Empty<string>(),
+              }, Json);
+        if (m.Attachments is null) return content;
         var urls = JsonSerializer.Deserialize<List<string>>(m.Attachments) ?? [];
-        return urls.Count == 0 ? m.Content : $"{m.Content}\n\n[Прикреплённые фото: {string.Join(", ", urls)}]";
+        return urls.Count == 0 ? content : $"{content}\n\n[Прикреплённые фото ({urls.Count}): {string.Join(", ", urls)}]";
     }
 
     /// <summary>
     /// The newest message carries its images themselves, so the model can read a menu, a price list or a product
     /// photo. Older messages only mention the file names, to keep every turn small.
     /// </summary>
-    object CurrentUserMessage(AssistantMessage user, List<string> images)
+    /// <summary>
+    /// A message with its photos attached as images, each labelled «Фото N: url» so the model can say which photo is
+    /// which and pass the right URLs to a product.
+    /// </summary>
+    object UserInput(AssistantMessage user, List<string> images)
     {
         var text = WithAttachmentNote(user);
         if (text.Length == 0) text = "(фото без подписи)";
         if (images.Count == 0) return new { role = "user", content = text };
-        var parts = new List<object> { new { type = "text", text } };
-        foreach (var url in images)
-            if (DataUrl(url) is { } data) parts.Add(new { type = "image_url", image_url = new { url = data, detail = "auto" } });
+        var parts = new List<object> { new { type = "input_text", text } };
+        for (var i = 0; i < images.Count; i++)
+        {
+            if (DataUrl(images[i]) is not { } data) continue;
+            parts.Add(new { type = "input_text", text = $"Фото {i + 1}: {images[i]}" });
+            parts.Add(new { type = "input_image", image_url = data, detail = "auto" });
+        }
         return new { role = "user", content = parts };
     }
 
@@ -454,6 +528,36 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
           their own wording, save it without arguing.
         - When the text is already good, don't nitpick — save it and move on.
 
+        # Product text rules — especially for long pasted texts and spec sheets
+        Administrators often paste a whole page from a marketplace or a supplier (marketing paragraphs, «Основная
+        информация», «Артикул», every characteristic twice). Never copy that into a description. Read it, keep what a
+        buyer needs, and structure it:
+        - Name (name_ru): type + brand + model + the 1–2 specs people choose by, at most ~60 characters.
+          E.g. «Ноутбук ASUS Vivobook S16 S3607VA, 16", 16/512 ГБ». No article numbers, no marketing words.
+        - Description: 2–3 short paragraphs separated by a blank line ("\n\n" in the text), together at most ~450 characters. First: what it
+          is and who it suits. Then: the 2–3 benefits that matter most, in plain words. Optionally: what is in the box or
+          the warranty. No lists of specs, no numbers already in the characteristics, no "лучший", no CAPS.
+        - Characteristics (attributes): the 8–14 facts people compare, each a short «name: value», in a sensible order
+          (for electronics: процессор, память, накопитель, экран, видеокарта, аккумулятор, разъёмы, беспроводная связь,
+          ОС, цвет, материал, гарантия, страна). Merge related lines into one value ("16 ГБ DDR5"; "16\", 1920×1200,
+          IPS, 144 Гц"). Weight goes to weight_grams, dimensions to length/width/height in cm (mm ÷ 10, rounded) — not
+          into attributes.
+        - Drop the noise: article numbers, section headers («Основные характеристики», «Заводские данные»), repeated
+          labels, "Состояние: новый", "Гарантия предоставляется продавцом", "Обяз. к предустановке ПО", plug type,
+          software brand names unless they matter to the buyer.
+        - Use only facts from their text. If the price is missing, ask for it before creating the product. Copy brand,
+          model, processor and part names exactly as written — never "correct" them («Intel Core 5 210H» must not
+          become «Core i5»). When a digest is given, keep its names and values as they are.
+        - Before creating from a long text, show a compact preview — the name, the description, 4–5 key
+          characteristics and "+ ещё N характеристик", the number of photos — and ask to confirm (and for the price and
+          category if missing). Keep that preview short; don't echo their whole text back.
+        - Always attach the photos the administrator sent for a product, even if they look like drafts or low quality —
+          you may suggest better photos, but whether to use them is their decision.
+        - Photos: when several photos come with one product, ALL of them go into image_urls of that product, in the order
+          sent (the first is the main photo). Several products with photos in one message: match each photo to its
+          product by LOOKING at it — never by the order they came in — and ask if unsure. In the preview, say which
+          photos go where («фото 1 и 3 — смартфон, 2 и 4 — наушники») so the administrator can correct it.
+
         # How to run the conversation
         - Follow this plan, one step at a time, skipping what is already done (see the progress list below):
           1. Business: what they sell and where → write a short «О нас» (update_store_profile); rename the shop if they want.
@@ -501,8 +605,8 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
         - Never invent prices, addresses or phone numbers. If you need them, ask. Example prices must be confirmed first.
           In texts («О нас», descriptions) stay with what the administrator told you: no made-up claims about quality,
           ingredients, years in business, awards or guarantees.
-        - Product and category names: always both Russian (name_ru) and Uzbek in the Latin script (name_uz), plus a 1–2
-          sentence description in both (see the Uzbek rule at the end).
+        - Product and category names: always both Russian (name_ru) and Uzbek in the Latin script (name_uz), plus a short
+          description in both (see the product text rules and the Uzbek rule at the end).
         - Photos the administrator attaches arrive as /uploads/... URLs (and you can see the newest ones). Use them as
           image_url for products or categories — look at each photo to decide which product it shows; if you can't tell,
           ask. If a photo is a menu or price list, read the items and prices and propose them as products.
@@ -570,13 +674,14 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
             .Select(p => new
             {
                 p.Id, p.Name, p.Price, p.OldPrice, p.Unit, p.IsActive, Category = p.Category != null ? p.Category.Name : null, p.Media,
+                p.Attributes,
                 Stock = p.Stock.Select(s => new { s.BranchId, s.Status, s.Quantity }).ToList(),
             }).ToListAsync();
         var total = await db.Products.CountAsync();
         sb.AppendLine(total == 0 ? "Products: none yet" : $"Products ({total}{(total > products.Count ? $", first {products.Count} shown" : "")}):");
         foreach (var p in products)
-            sb.AppendLine($"- id={p.Id} {p.Name.Get()} — {AssistantTools.Money(p.Price)}/{p.Unit}{(p.OldPrice is { } o ? $" (was {AssistantTools.Money(o)})" : "")}, " +
-                          $"category: {p.Category?.Get() ?? "—"}, photo: {(p.Media.Count > 0 ? "yes" : "no")}{(p.IsActive ? "" : ", hidden")}, " +
+            sb.AppendLine($"- id={p.Id}{(tools.CreatedThisTurn.Contains(p.Id) ? " (created by you just now, in this turn)" : "")} {p.Name.Get()} — {AssistantTools.Money(p.Price)}/{p.Unit}{(p.OldPrice is { } o ? $" (was {AssistantTools.Money(o)})" : "")}, " +
+                          $"category: {p.Category?.Get() ?? "—"}, photos: {p.Media.Count}, characteristics: {p.Attributes.Count}{(p.IsActive ? "" : ", hidden")}, " +
                           $"stock: {(p.Stock.Count == 0 ? "NOT SOLD ANYWHERE" : string.Join("; ", p.Stock.Select(s => $"branch {s.BranchId} " + (s.Status == StockStatus.Unlimited ? "unlimited" : $"{s.Quantity} pcs"))))}");
 
         sb.AppendLine("Setup progress:");

@@ -47,7 +47,7 @@ public class AssistantController(SetupAssistant assistant, AppDbContext db, Stor
 
     public record BranchRef(int Id, string Name);
     public record StockCell(int BranchId, StockStatus Status, int Quantity);
-    public record ProductAvailability(int Id, string Name, long Price, string Unit, string? ImageUrl, List<StockCell> Stock);
+    public record ProductAvailability(int Id, string Name, long Price, string Unit, string? ImageUrl, int Photos, List<StockCell> Stock);
     public record Availability(List<BranchRef> Branches, List<ProductAvailability> Products);
 
     /// <summary>
@@ -62,7 +62,7 @@ public class AssistantController(SetupAssistant assistant, AppDbContext db, Stor
         var products = await db.Products.AsNoTracking().Include(p => p.Stock).Where(p => wanted.Contains(p.Id)).ToListAsync();
         return new Availability(branches, products.OrderBy(p => wanted.IndexOf(p.Id))
             .Select(p => new ProductAvailability(p.Id, p.Name.Get(), p.Price, p.Unit,
-                p.Media.FirstOrDefault(m => m.Type == "image")?.Url,
+                p.Media.FirstOrDefault(m => m.Type == "image")?.Url, p.Media.Count(m => m.Type == "image"),
                 p.Stock.Select(s => new StockCell(s.BranchId, s.Status, s.Quantity)).ToList())).ToList());
     }
 

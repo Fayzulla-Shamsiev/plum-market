@@ -235,7 +235,7 @@ export interface AssistantCard {
 /** Where each product is sold and how many are left there (the table under «Добавлено товаров»). */
 export interface Availability {
   branches: { id: number; name: string }[]
-  products: { id: number; name: string; price: number; unit: string; imageUrl: string | null; stock: { branchId: number; status: StockStatus; quantity: number }[] }[]
+  products: { id: number; name: string; price: number; unit: string; imageUrl: string | null; photos: number; stock: { branchId: number; status: StockStatus; quantity: number }[] }[]
 }
 /** quantity null = unlimited. */
 export type AvailabilityInput = { productId: number; branches: { branchId: number; quantity: number | null }[] }[]

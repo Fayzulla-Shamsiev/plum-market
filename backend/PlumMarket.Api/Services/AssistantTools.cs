@@ -52,10 +52,56 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
 
     static readonly string[] Units = ["шт", "кг", "г", "л", "мл", "порция", "упак"];
 
+    /// <summary>
+    /// Every amount the conversation has mentioned before this turn — typed by the administrator, or shown by the
+    /// assistant in a preview the administrator has since answered. A product price must be one of them: the model
+    /// may read a price off a photo and propose it, but it can never make one up and save it unseen.
+    /// Set by <see cref="SetupAssistant"/> for each turn.
+    /// </summary>
+    public HashSet<long> KnownAmounts { get; set; } = [];
+
+    /// <summary>
+    /// Product cards distilled from long texts in this conversation, by reference («D48.1» = message 48, product 1).
+    /// create_products_from_digest copies them field by field, so the model never retypes a spec sheet.
+    /// </summary>
+    public Dictionary<string, JsonElement> Digests { get; set; } = [];
+
+    /// <summary>Products created during the current turn — so the refreshed snapshot doesn't read as "already there".</summary>
+    public HashSet<int> CreatedThisTurn { get; } = [];
+
+    /// <summary>"25 000", "25000", "25.000", "25 тыс", "6,5 млн", "1.2m" → the amounts in сум a text can mean.</summary>
+    public static IEnumerable<long> Amounts(string text)
+    {
+        foreach (Match m in AmountPattern().Matches(text))
+        {
+            var raw = m.Groups[1].Value.Replace(" ", "").Replace("\u00A0", "").Replace("\u202F", "");
+            var unit = m.Groups[2].Value.ToLowerInvariant();
+            var multiplier = unit.StartsWith("млн") || unit.StartsWith("mln") || unit.StartsWith("mil") || unit == "m" ? 1_000_000
+                : unit.Length > 0 ? 1_000 : 1;
+            // With a multiplier a comma or dot is a decimal point ("6,5 млн"); without one it groups thousands ("25.000").
+            if (multiplier > 1 && double.TryParse(raw.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
+                yield return (long)Math.Round(d * multiplier);
+            if (long.TryParse(raw.Replace(",", "").Replace(".", ""), out var whole))
+            {
+                yield return whole * multiplier;
+                if (multiplier == 1) yield return whole;
+            }
+        }
+    }
+
+    [GeneratedRegex(@"(\d(?:[\d\s\u00A0\u202F.,]*\d)?)\s*(тыс\w*|т\.|k\b|к\b|млн\w*|mln|million|ming|m\b)?", RegexOptions.IgnoreCase)]
+    private static partial Regex AmountPattern();
+
+    /// <summary>Null when the amount was mentioned; otherwise what the model is told instead of saving it.</summary>
+    string? Unconfirmed(long amount, string what) =>
+        KnownAmounts.Contains(amount) ? null
+            : $"{what}: сумму {Money(amount)} администратор не называл и не подтверждал — не сохранено. Спросите цену " +
+              "(или покажите вариант с ценой и дождитесь подтверждения).";
+
     // ------------------------------------------------------------------ definitions (OpenAI function schemas)
 
     /// <summary>
-    /// Strict schemas: every property is required, optional ones are nullable — the model then always sends
+    /// Strict schemas (OpenAI Responses API format): every property is required, optional ones are nullable — the model then always sends
     /// well-formed arguments, and null means "leave as it is".
     /// </summary>
     public static readonly object[] Definitions =
@@ -127,17 +173,39 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
                 {
                     ["name_ru"] = Str("Name in Russian"),
                     ["name_uz"] = Str("Name in Uzbek, Latin script"),
-                    ["description_ru"] = NStr("1–2 sentences in Russian"),
-                    ["description_uz"] = NStr("1–2 sentences in Uzbek Latin"),
+                    ["description_ru"] = NStr("Short, readable description in Russian (see the product text rules)"),
+                    ["description_uz"] = NStr("The same in Uzbek Latin"),
                     ["price"] = Int("Price in сум, > 0"),
                     ["old_price"] = NInt("Crossed-out price in сум (must be higher than price)"),
                     ["cost_price"] = NInt("Cost price in сум, for profit reports"),
                     ["unit"] = new Dictionary<string, object> { ["type"] = "string", ["enum"] = Units, ["description"] = "Unit of sale" },
                     ["category"] = NStr("Russian category name"),
                     ["weight_grams"] = NInt("Weight in grams"),
-                    ["image_url"] = NStr("An /uploads/... image the administrator attached"),
+                    ["length_cm"] = NInt("Size in cm (rounded), with width and height"),
+                    ["width_cm"] = NInt("Width in cm"),
+                    ["height_cm"] = NInt("Height / thickness in cm"),
+                    ["attributes"] = new Dictionary<string, object> { ["type"] = new[] { "array", "null" }, ["items"] = Obj(new() { ["name"] = Str("Characteristic in Russian, e.g. «Процессор»"), ["value"] = Str("Short value, e.g. «Intel Core 5 210H, 8 ядер»") }), ["description"] = "Key characteristics shown as a table in the shop" },
+                    ["image_urls"] = new Dictionary<string, object> { ["type"] = new[] { "array", "null" }, ["items"] = new Dictionary<string, object> { ["type"] = "string" }, ["description"] = "ALL /uploads/... photos of THIS product, in the order sent; the first is the main photo" },
                     ["branch_ids"] = new Dictionary<string, object> { ["type"] = new[] { "array", "null" }, ["items"] = new Dictionary<string, object> { ["type"] = "integer" }, ["description"] = "Branch ids where it is sold; null = all branches" },
                     ["quantity"] = NInt("Pieces in stock per branch; null = unlimited (made to order, always available)"),
+                })),
+            }),
+        Fn("create_products_from_digest",
+            "Create products from the product cards distilled from a long text (refs like «D48.1» shown with that " +
+            "message). The server copies name, description, characteristics, weight, size, price and stock from the card " +
+            "exactly — ALWAYS use this instead of create_products for such products. Pass only what the administrator " +
+            "added or changed (price when the card has none, a new quantity, category, branches) and the photos.",
+            new()
+            {
+                ["items"] = Arr(Obj(new()
+                {
+                    ["ref"] = Str("The card's ref, e.g. «D48.1»"),
+                    ["price"] = NInt("Price in сум — only if the card has none or the administrator changed it"),
+                    ["quantity"] = NInt("Stock per branch — only if the administrator gave or changed it; null keeps the card's"),
+                    ["unlimited"] = Bool("True when the administrator said it is always available / made to order"),
+                    ["category"] = NStr("Russian category name; null = the card's category_hint"),
+                    ["branch_ids"] = new Dictionary<string, object> { ["type"] = new[] { "array", "null" }, ["items"] = new Dictionary<string, object> { ["type"] = "integer" }, ["description"] = "Branch ids where it is sold; null = all branches" },
+                    ["image_urls"] = new Dictionary<string, object> { ["type"] = new[] { "array", "null" }, ["items"] = new Dictionary<string, object> { ["type"] = "string" }, ["description"] = "The /uploads/... photos of THIS product (chosen by looking at them), main photo first" },
                 })),
             }),
         Fn("update_product",
@@ -152,7 +220,9 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
                 ["price"] = NInt("Price in сум"),
                 ["old_price"] = NInt("Crossed-out price in сум, 0 to remove"),
                 ["category"] = NStr("Russian category name (created if missing)"),
-                ["image_url"] = NStr("An /uploads/... image to use as the main photo"),
+                ["image_urls"] = new Dictionary<string, object> { ["type"] = new[] { "array", "null" }, ["items"] = new Dictionary<string, object> { ["type"] = "string" }, ["description"] = "Photos to add to the product, in order; the first becomes the main photo. Null keeps the photos" },
+                ["attributes"] = new Dictionary<string, object> { ["type"] = new[] { "array", "null" }, ["items"] = Obj(new() { ["name"] = Str("Characteristic in Russian, e.g. «Процессор»"), ["value"] = Str("Short value, e.g. «Intel Core 5 210H, 8 ядер»") }), ["description"] = "Replaces the characteristics table; null keeps it" },
+                ["weight_grams"] = NInt("Weight in grams"),
                 ["is_active"] = new Dictionary<string, object> { ["type"] = new[] { "boolean", "null" }, ["description"] = "Shown in the shop" },
                 ["branch_ids"] = new Dictionary<string, object> { ["type"] = new[] { "array", "null" }, ["items"] = new Dictionary<string, object> { ["type"] = "integer" }, ["description"] = "Branch ids where it is sold (replaces the current list); null keeps it" },
                 ["quantity"] = NInt("Stock per listed branch; null keeps it (or unlimited for newly listed branches)"),
@@ -206,19 +276,17 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
             new()),
     ];
 
+    /// <summary>A function tool in the Responses API's (flat) format.</summary>
     static object Fn(string name, string description, Dictionary<string, object> properties) => new
     {
         type = "function",
-        function = new
+        name, description, strict = true,
+        parameters = new Dictionary<string, object>
         {
-            name, description, strict = true,
-            parameters = new Dictionary<string, object>
-            {
-                ["type"] = "object",
-                ["properties"] = properties,
-                ["required"] = properties.Keys.ToArray(),
-                ["additionalProperties"] = false,
-            },
+            ["type"] = "object",
+            ["properties"] = properties,
+            ["required"] = properties.Keys.ToArray(),
+            ["additionalProperties"] = false,
         },
     };
 
@@ -255,6 +323,7 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
                 "save_branch" => await SaveBranch(a),
                 "create_categories" => await CreateCategories(a),
                 "create_products" => await CreateProducts(a),
+                "create_products_from_digest" => await CreateFromDigest(a),
                 "update_product" => await UpdateProduct(a),
                 "delete_products" => await DeleteProducts(a),
                 "delete_category" => await DeleteCategory(a),
@@ -478,6 +547,55 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
                 CategoryIds: createdIds.Select(c => c.Id).ToList()));
     }
 
+    /// <summary>
+    /// The card as distilled, plus the administrator's additions — turned into an ordinary create_products call, so
+    /// every rule of creating a product (price check, stock, merge, card) applies unchanged.
+    /// </summary>
+    async Task<ToolOutcome> CreateFromDigest(JsonElement a)
+    {
+        var products = new List<Dictionary<string, object?>>();
+        var unknown = new List<string>();
+        foreach (var item in Items(a, "items"))
+        {
+            var reference = S(item, "ref") ?? "";
+            if (!Digests.TryGetValue(reference, out var card)) { unknown.Add(reference); continue; }
+            long? Num(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : null;
+            string? Text(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+            var price = L(item, "price") ?? Num(card, "price");
+            // The card's price came from the administrator's own text, so it counts as named by them.
+            if (Num(card, "price") is { } cardPrice) KnownAmounts.Add(cardPrice);
+            var unlimited = item.TryGetProperty("unlimited", out var u) && u.ValueKind == JsonValueKind.True;
+            products.Add(new()
+            {
+                ["name_ru"] = Text(card, "name_ru"),
+                ["name_uz"] = Text(card, "name_uz"),
+                ["description_ru"] = Text(card, "description_ru"),
+                ["description_uz"] = Text(card, "description_uz"),
+                ["price"] = price,
+                ["old_price"] = null,
+                ["cost_price"] = null,
+                ["unit"] = "шт",
+                ["category"] = S(item, "category") ?? Text(card, "category_hint"),
+                ["weight_grams"] = Num(card, "weight_grams"),
+                ["length_cm"] = Num(card, "length_cm"),
+                ["width_cm"] = Num(card, "width_cm"),
+                ["height_cm"] = Num(card, "height_cm"),
+                ["attributes"] = card.TryGetProperty("attributes", out var attrs) ? attrs : null,
+                ["image_urls"] = item.TryGetProperty("image_urls", out var imgs) ? imgs : null,
+                ["branch_ids"] = item.TryGetProperty("branch_ids", out var br) ? br : null,
+                ["quantity"] = unlimited ? null : L(item, "quantity") ?? Num(card, "quantity"),
+            });
+        }
+        if (products.Count == 0)
+            return new ToolOutcome($"Ошибка: карточки {string.Join(", ", unknown)} не найдены — проверьте ref (вида «D48.1»).");
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(new { products }));
+        var outcome = await CreateProducts(doc.RootElement);
+        return unknown.Count == 0 ? outcome
+            : outcome with { Result = outcome.Result + $" Не найдены карточки: {string.Join(", ", unknown)}." };
+    }
+
     async Task<ToolOutcome> CreateProducts(JsonElement a)
     {
         var categories = await db.Categories.ToListAsync();
@@ -495,7 +613,8 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
             if (existing.Any(n => Same(n.Get(), ru))) { problems.Add($"«{ru}» уже есть"); continue; }
             var price = L(p, "price") ?? 0;
             if (price <= 0) { problems.Add($"«{ru}»: нет цены"); continue; }
-            var old = L(p, "old_price");
+            if (Unconfirmed(price, $"«{ru}»") is { } unknown) { problems.Add(unknown); continue; }
+            var old = L(p, "old_price") is { } o0 && Unconfirmed(o0, "") is null ? o0 : (long?)null;
 
             var product = new Product
             {
@@ -512,7 +631,9 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
                 CreatedAt = DateTime.Now,
                 UpdatedAt = DateTime.Now,
             };
-            if (Upload(S(p, "image_url")) is { } image) product.Media.Add(new ProductMedia { Url = image, Type = "image" });
+            product.Media.AddRange(Images(p).Select(url => new ProductMedia { Url = url, Type = "image" }));
+            product.Attributes = Attributes(p) ?? [];
+            (product.LengthCm, product.WidthCm, product.HeightCm) = ((int?)L(p, "length_cm"), (int?)L(p, "width_cm"), (int?)L(p, "height_cm"));
             var where = BranchList(p, allBranches) ?? allBranches;
             if (where.Count == 0) { problems.Add($"«{ru}»: филиалы не найдены"); continue; }
             SetStock(product, where, quantity);
@@ -520,9 +641,11 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
             products.Add(product);
             existing.Add(product.Name);
             var place = where.Count == allBranches.Count ? "" : " — " + string.Join(", ", branches.Where(b => where.Contains(b.Id)).Select(b => b.Name));
-            created.Add($"{ru} — {Money(price)}{place}{(quantity is { } q ? $", {q} шт" : "")}");
+            created.Add($"{ru} — {Money(price)}{place}{(quantity is { } q ? $", {q} шт" : "")}" +
+                        (product.Media.Count > 1 ? $", фото: {product.Media.Count}" : ""));
         }
         await db.SaveChangesAsync();
+        CreatedThisTurn.UnionWith(products.Select(x => x.Id));
 
         var result = created.Count > 0 ? $"Созданы товары ({created.Count}): {string.Join("; ", created)}." : "Товары не созданы.";
         if (problems.Count > 0) result += " Пропущены: " + string.Join("; ", problems) + ".";
@@ -547,12 +670,14 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
         if (L(a, "price") is { } price)
         {
             if (price <= 0) throw new ToolError("цена должна быть больше нуля");
+            if (Unconfirmed(price, $"«{p.Name.Get()}»") is { } unknown) throw new ToolError(unknown);
             p.Price = price;
             if (p.OldPrice is { } o && o <= price) p.OldPrice = null;
             lines.Add($"Цена: {Money(price)}");
         }
         if (L(a, "old_price") is { } old)
         {
+            if (old > 0 && Unconfirmed(old, "Старая цена") is { } unknownOld) throw new ToolError(unknownOld);
             if (old > 0 && old <= p.Price) throw new ToolError("старая цена должна быть выше текущей");
             p.OldPrice = old > 0 ? old : null;
             lines.Add(old > 0 ? $"Старая цена: {Money(old)}" : "Старая цена убрана");
@@ -562,11 +687,21 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
             p.Category = await CategoryByName(await db.Categories.ToListAsync(), cat);
             lines.Add($"Категория: {cat}");
         }
-        if (Upload(S(a, "image_url")) is { } image)
+        if (Images(a) is { Count: > 0 } images)
         {
-            p.Media.RemoveAll(m => m.Url == image);
-            p.Media.Insert(0, new ProductMedia { Url = image, Type = "image" });
-            lines.Add("Фото добавлено");
+            p.Media.RemoveAll(m => images.Contains(m.Url));
+            p.Media.InsertRange(0, images.Select(url => new ProductMedia { Url = url, Type = "image" }));
+            lines.Add(images.Count == 1 ? "Фото добавлено" : $"Добавлено фото: {images.Count}");
+        }
+        if (Attributes(a) is { } attributes)
+        {
+            p.Attributes = attributes;
+            lines.Add($"Характеристик: {attributes.Count}");
+        }
+        if ((int?)L(a, "weight_grams") is > 0 and var grams)
+        {
+            p.WeightGrams = grams;
+            lines.Add($"Вес: {grams} г");
         }
         if (a.TryGetProperty("is_active", out var active) && active.ValueKind is JsonValueKind.True or JsonValueKind.False)
         {
@@ -799,6 +934,24 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
         }
         return l;
     }
+
+    /// <summary>The product's photos, in the order given — only this app's uploads, at most 10, no repeats.</summary>
+    static List<string> Images(JsonElement a) =>
+        a.TryGetProperty("image_urls", out var v) && v.ValueKind == JsonValueKind.Array
+            ? v.EnumerateArray().Select(x => Upload(x.ValueKind == JsonValueKind.String ? x.GetString() : null))
+                .OfType<string>().Distinct().Take(10).ToList()
+            : [];
+
+    /// <summary>The characteristics table: short name → value pairs; null when the call didn't mention it.</summary>
+    static List<ProductAttribute>? Attributes(JsonElement a) =>
+        a.TryGetProperty("attributes", out var v) && v.ValueKind == JsonValueKind.Array
+            ? v.EnumerateArray().Select(x => new ProductAttribute { Name = S(x, "name") ?? "", Value = S(x, "value") ?? "" })
+                .Where(x => x.Name.Length > 0 && x.Value.Length > 0)
+                // Weight and size have their own fields, shown as their own rows in the shop.
+                .Where(x => !Regex.IsMatch(x.Name, "^(вес|масса|габарит|размер)", RegexOptions.IgnoreCase))
+                .Select(x => new ProductAttribute { Name = Cut(x.Name, 60)!, Value = Cut(x.Value, 160)! })
+                .DistinctBy(x => x.Name.ToLowerInvariant()).Take(20).ToList()
+            : null;
 
     /// <summary>Only files the administrator uploaded to this app may become product or category images.</summary>
     static string? Upload(string? url) =>

@@ -102,7 +102,10 @@ async function save() {
           <tr v-for="p in data.products" :key="p.id" :class="{ warn: nowhere.includes(p) }">
             <td class="name">
               <div class="prod">
-                <PhotoSlot kind="product" :id="p.id" :url="p.imageUrl" :label="p.name" @changed="u => (p.imageUrl = u)" />
+                <span class="photo">
+                  <PhotoSlot kind="product" :id="p.id" :url="p.imageUrl" :label="p.name" @changed="u => (p.imageUrl = u)" />
+                  <b v-if="p.photos > 1" class="more" :title="`Всего фото: ${p.photos}`">+{{ p.photos - 1 }}</b>
+                </span>
                 <div class="prod-text">
                   <RouterLink :to="`/products/items/${p.id}`">{{ p.name }}</RouterLink>
                   <small>{{ money(p.price) }} / {{ p.unit }}</small>
@@ -148,6 +151,8 @@ td { padding: 6px 4px; border-bottom: 1px solid #f0f3f8; vertical-align: middle;
 tr:last-child td { border-bottom: 0; }
 .name { min-width: 200px; }
 .prod { display: flex; align-items: center; gap: 10px; }
+.photo { position: relative; flex: none; }
+.more { position: absolute; right: -6px; bottom: -6px; min-width: 20px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--blue); color: #fff; font-size: 11px; display: grid; place-items: center; border: 2px solid #fff; }
 .prod-text { display: flex; flex-direction: column; min-width: 0; }
 td.name a { color: var(--ink); font-weight: 600; }
 td.name a:hover { color: var(--blue); }

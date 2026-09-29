@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import AdminTour from './components/AdminTour.vue'
 import Icon from './components/Icon.vue'
 import { admin, logout } from './auth'
 import { chatUnread, newOrders, useLookups, watchChatUnread, watchNewOrders } from './store'
+import { startTour, tourActive, tourSidebar } from './tour'
 
 interface Section { path: string; label: string; icon: string; ready?: boolean; children?: { path: string; label: string }[] }
 
@@ -51,7 +53,8 @@ const currentGroup = computed(() => sections.find(s => s.children && route.path.
 const expanded = ref<string | null>(currentGroup.value)
 
 watch(() => route.fullPath, () => {
-  menuOpen.value = false
+  // The guided tour opens pages itself and decides when the phone's menu drawer is shown.
+  menuOpen.value = tourActive.value && tourSidebar.value
   if (currentGroup.value) expanded.value = currentGroup.value
 })
 // The storefront and the sign-in pages bring their own layout; only the panel gets the sidebar.
@@ -64,6 +67,13 @@ const stopAdminWatch = watch(() => route.matched.length && !bare.value, admin =>
   watchNewOrders()
   queueMicrotask(() => stopAdminWatch())
 }, { immediate: true })
+
+// Guided tour: starts by itself the first time an administrator reaches the panel (after the AI assistant), and
+// again from «Обучение». Never inside the assistant or the storefront.
+watch([() => admin.value?.tourDone, bare], ([done, isBare]) => {
+  if (done === false && !isBare && !tourActive.value) startTour()
+}, { immediate: true })
+watch(tourSidebar, open => { if (tourActive.value) menuOpen.value = open })
 
 const toggle = (path: string) => (expanded.value = expanded.value === path ? null : path)
 
@@ -101,16 +111,16 @@ async function signOut() {
       <nav>
         <template v-for="s in sections" :key="s.path">
           <template v-if="s.children">
-            <button class="nav-item" :class="{ 'group-active': currentGroup === s.path }" :aria-expanded="expanded === s.path" @click="toggle(s.path)">
+            <button class="nav-item" :data-tour="`nav-${s.path}`" :class="{ 'group-active': currentGroup === s.path }" :aria-expanded="expanded === s.path" @click="toggle(s.path)">
               <Icon :name="s.icon" />
               <span>{{ s.label }}</span>
               <Icon name="chevronRight" class="chev" :class="{ open: expanded === s.path }" />
             </button>
             <div v-show="expanded === s.path" class="sub">
-              <RouterLink v-for="c in s.children" :key="c.path" :to="c.path" class="sub-item">{{ c.label }}</RouterLink>
+              <RouterLink v-for="c in s.children" :key="c.path" :to="c.path" class="sub-item" :data-tour="`nav-${c.path}`">{{ c.label }}</RouterLink>
             </div>
           </template>
-          <RouterLink v-else :to="s.path" class="nav-item" :class="{ soon: !s.ready }">
+          <RouterLink v-else :to="s.path" class="nav-item" :data-tour="`nav-${s.path}`" :class="{ soon: !s.ready }">
             <Icon :name="s.icon" />
             <span>{{ s.label }}</span>
             <span v-if="s.path === '/chat' && chatUnread" class="badge-count">{{ chatUnread }}</span>
@@ -120,16 +130,19 @@ async function signOut() {
         </template>
       </nav>
       <div class="sidebar-foot">
-        <RouterLink to="/assistant" class="ai-link">
+        <RouterLink to="/assistant" class="ai-link" data-tour="assistant">
           <Icon name="sparkles" />
           <span>ИИ-помощник</span>
         </RouterLink>
-        <RouterLink :to="storefront" class="shop-link">Открыть магазин ↗</RouterLink>
-        <div class="account">
+        <RouterLink :to="storefront" class="shop-link" data-tour="shop">Открыть магазин ↗</RouterLink>
+        <div class="account" data-tour="account">
           <span class="who">
             <b>{{ admin?.name }}</b>
             <small>{{ phone }}</small>
           </span>
+          <button class="logout" title="Обучение: как устроена панель" aria-label="Обучение" @click="startTour">
+            <Icon name="help" />
+          </button>
           <button class="logout" title="Выйти" @click="signOut">
             <Icon name="logout" />
           </button>
@@ -138,6 +151,7 @@ async function signOut() {
       </div>
     </aside>
     <div v-if="menuOpen" class="scrim" @click="menuOpen = false" />
+    <AdminTour v-if="tourActive" />
     <main class="main">
       <button class="btn btn-ghost btn-icon mobile-menu" aria-label="Меню" @click="menuOpen = true">
         <Icon name="menu" />
@@ -187,6 +201,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .who { display: flex; flex-direction: column; min-width: 0; }
 .who b { color: #e9ddf1; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .who small { color: #9c86ad; font-size: 11.5px; }
+.logout + .logout { margin-left: 0; }
 .logout { margin-left: auto; width: 30px; height: 30px; flex: none; display: grid; place-items: center; border: 0; border-radius: 8px; background: rgb(255 255 255 / 8%); color: #dccbe8; cursor: pointer; }
 .logout:hover { background: rgb(255 255 255 / 16%); color: #fff; }
 .logout svg { width: 16px; height: 16px; }

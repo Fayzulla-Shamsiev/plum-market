@@ -253,6 +253,14 @@ function onBubbleClick(e: MouseEvent) {
   router.push(a.getAttribute('href')!)
 }
 
+// A pasted page of specs folds to a few lines; the assistant has read all of it.
+const expanded = ref(new Set<number>())
+function toggle(id: number) {
+  const next = new Set(expanded.value)
+  if (!next.delete(id)) next.add(id)
+  expanded.value = next
+}
+
 const shown = (c: AssistantCard) => (c.lines ?? []).slice(0, 6)
 const more = (c: AssistantCard) => Math.max(0, (c.lines?.length ?? 0) - 6)
 /** A form is only worth showing once: the latest request for it, and only while no bot is connected. */
@@ -309,7 +317,10 @@ const lastTelegramCard = computed(() => {
                 </div>
                 <!-- eslint-disable-next-line vue/no-v-html -- render() escapes everything before adding its own tags -->
                 <div v-if="m.text && m.role === 'assistant'" class="bubble" @click="onBubbleClick" v-html="render(m.text)" />
-                <div v-else-if="m.text" class="bubble">{{ m.text }}</div>
+                <div v-else-if="m.text" class="bubble" :class="{ folded: m.text.length > 480 && !expanded.has(m.id) }">{{ m.text }}</div>
+                <button v-if="m.role === 'user' && m.text.length > 480" class="unfold" @click="toggle(m.id)">
+                  {{ expanded.has(m.id) ? 'Свернуть' : 'Показать полностью' }}
+                </button>
 
                 <template v-for="(c, i) in m.cards" :key="i">
                   <div v-if="c.kind === 'change'" class="card change">
@@ -485,6 +496,9 @@ const lastTelegramCard = computed(() => {
 .bubble :deep(b) { font-weight: 650; }
 .bubble :deep(a) { color: var(--blue); font-weight: 550; }
 .bubble :deep(a:hover) { text-decoration: underline; }
+.bubble.folded { max-height: 9.5em; overflow: hidden; -webkit-mask-image: linear-gradient(180deg, #000 60%, transparent); mask-image: linear-gradient(180deg, #000 60%, transparent); }
+.unfold { align-self: flex-end; border: 0; background: none; padding: 0 4px; font: inherit; font-size: 13px; font-weight: 600; color: var(--blue); cursor: pointer; }
+.unfold:hover { text-decoration: underline; }
 .imgs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .imgs img { width: 120px; height: 120px; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); background: #fff; }
 

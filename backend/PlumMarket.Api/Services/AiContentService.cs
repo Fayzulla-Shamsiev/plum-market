@@ -162,6 +162,95 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
         }
     }
 
+    /// <summary>
+    /// Turns a long text an administrator pasted — a marketplace page, a supplier's spec sheet — into product cards
+    /// ready for the catalog: a short name, a readable description, a characteristics table, weight and size. One
+    /// focused call, so the setup assistant gets a compact summary instead of pages of raw text.
+    /// Returns the JSON, or null when the text describes no product or the call fails.
+    /// </summary>
+    public async Task<string?> DigestProductsAsync(string text, CancellationToken ct)
+    {
+        if (!AiEnabled) return null;
+        var system = """
+            You prepare product cards for an online shop in Uzbekistan from text an administrator pasted (a marketplace
+            page, a supplier's spec sheet, a messy description). Extract every product it describes; if it describes no
+            product for sale (e.g. text about the shop itself), return an empty products array.
+
+            For each product:
+            - name_ru: type + brand + model + the 1–2 specs people choose by, max ~60 characters, no article numbers, no
+              marketing words. E.g. «Ноутбук ASUS Vivobook S16 S3607VA, 16", 16/512 ГБ», «Кроссовки Nike Air Max 90, белые».
+            - description_ru: 2–3 short paragraphs separated by a blank line, 250–450 characters in total, written for a
+              buyer in plain Russian. Paragraph 1: what it is and who it suits. Paragraph 2: the 2–3 benefits that matter
+              most in everyday use (explain what a spec gives the buyer, e.g. "144 Гц — плавная картинка", not a list of
+              numbers). Paragraph 3 (optional): what is in the box, warranty. Do not list specs that are in attributes.
+            - attributes: 8–14 rows of what buyers compare, short «name: value», merged where related ("16 ГБ DDR5";
+              "16", 1920×1200, IPS, 144 Гц"; "2× USB-C 3.2, 2× USB-A 3.2, HDMI 2.1, 3,5 мм"). Useful order for
+              electronics: процессор, оперативная память, накопитель, экран, видеокарта, аккумулятор, разъёмы,
+              беспроводная связь, веб-камера, клавиатура, ОС, цвет, материал, гарантия, страна производства. Adapt the
+              list to other kinds of goods. No weight or dimensions here.
+            - weight_grams, length_cm/width_cm/height_cm: from the text (mm ÷ 10, rounded; kg × 1000), else null.
+            - price: only when the text states the selling price in сум; otherwise null. Never guess.
+            - quantity: pieces in stock when the text says so ("есть 6 штук", "в наличии 15"); otherwise null.
+            - category_hint: a short Russian category name that fits (e.g. «Ноутбуки»).
+            - name_uz, description_uz: the same in Uzbek, Latin script.
+            Drop the noise: article numbers, section headers, repeated labels, "Состояние: новый", "Гарантия
+            предоставляется продавцом", preinstalled-software flags, plug type. Use only facts from the text.
+            Copy brand, model, processor and part names exactly as written — never "correct" or modernise them:
+            «Intel Core 5 210H» is a real name and must not become «Core i5»; «S3607VA» stays «S3607VA».
+            missing: what a buyer would still need that the text lacks (usually the price) — short Russian phrases.
+            """ + "\n" + UzbekRule;
+
+        static JsonElement E(object o) => JsonSerializer.SerializeToElement(o);
+        var nstr = new { type = new[] { "string", "null" } };
+        var nint = new { type = new[] { "integer", "null" } };
+        var product = new
+        {
+            type = "object",
+            properties = new
+            {
+                name_ru = new { type = "string" }, name_uz = new { type = "string" },
+                description_ru = new { type = "string" }, description_uz = new { type = "string" },
+                price = nint, quantity = nint, category_hint = nstr,
+                attributes = new
+                {
+                    type = "array",
+                    items = new
+                    {
+                        type = "object",
+                        properties = new { name = new { type = "string" }, value = new { type = "string" } },
+                        required = new[] { "name", "value" }, additionalProperties = false,
+                    },
+                },
+                weight_grams = nint, length_cm = nint, width_cm = nint, height_cm = nint,
+            },
+            required = new[] { "name_ru", "name_uz", "description_ru", "description_uz", "price", "quantity", "category_hint", "attributes", "weight_grams", "length_cm", "width_cm", "height_cm" },
+            additionalProperties = false,
+        };
+        var schema = new Dictionary<string, JsonElement>
+        {
+            ["type"] = E("object"),
+            ["properties"] = E(new { products = new { type = "array", items = product }, missing = new { type = "array", items = new { type = "string" } } }),
+            ["required"] = E(new[] { "products", "missing" }),
+            ["additionalProperties"] = E(false),
+        };
+
+        try
+        {
+            // The strong model with some reasoning: this is exactly where a weaker one mixed up facts.
+            var response = await RespondAsync(system,
+                [new { role = "user", content = text.Length > 12_000 ? text[..12_000] : text }], null,
+                new { type = "json_schema", name = "product_digest", strict = true, schema }, "medium", ct);
+            using var json = JsonDocument.Parse(OutputText(response));
+            return json.RootElement.GetProperty("products").GetArrayLength() == 0 ? null
+                : JsonSerializer.Serialize(json.RootElement, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            log.LogWarning(e, "Product digest failed");
+            return null;
+        }
+    }
+
     // ------------------------------------------------------------------ OpenAI
 
     async Task<Dictionary<string, string>> TranslateWithAi(string from, string to, Dictionary<string, string> fields, CancellationToken ct)
@@ -248,34 +337,42 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
     }
 
     /// <summary>
-    /// One turn of a tool-using conversation (the setup assistant). <paramref name="messages"/> and
-    /// <paramref name="tools"/> are already in OpenAI's chat format; the reply's message object comes back as is,
-    /// so the caller can run its tool calls. Same key, same rules: attached here and nowhere else, never logged.
+    /// The setup assistant's model. It follows a long playbook, many tools and messy pasted texts, so it gets the
+    /// strongest model with reasoning; overridable with OpenAI:AssistantModel.
     /// </summary>
-    public async Task<JsonElement> ChatAsync(IEnumerable<object> messages, IEnumerable<object> tools,
-        object? responseFormat, CancellationToken ct)
+    public string AssistantModel => config["OpenAI:AssistantModel"] is { Length: > 0 } m ? m : "gpt-6-luna";
+
+    /// <summary>Stands in when the main model hits the account's rate limit (OpenAI:AssistantFallbackModel).</summary>
+    string FallbackModel => config["OpenAI:AssistantFallbackModel"] is { Length: > 0 } m ? m : "gpt-5.4-mini";
+
+    /// <summary>
+    /// One call to OpenAI's Responses API — the API that lets a reasoning model use tools. <paramref name="input"/> is
+    /// in its item format (messages, function calls and their outputs); the whole response object comes back, so the
+    /// caller can run its function calls and pass the output items on to the next round.
+    ///
+    /// Nothing is stored at OpenAI (store: false): the model's reasoning travels back encrypted inside the output items
+    /// instead. The key is attached here and nowhere else, and never logged.
+    /// </summary>
+    public async Task<JsonElement> RespondAsync(string instructions, IEnumerable<object> input, IEnumerable<object>? tools,
+        object? textFormat, string effort, CancellationToken ct)
     {
         if (ApiKey is not { } key) throw new InvalidOperationException("ключ OpenAI не настроен");
+        var model = AssistantModel;
+        var body = await SendResponseAsync(key, model, instructions, input, tools, textFormat, effort, ct);
 
-        // The setup assistant follows a long playbook and many tools, where the full model is noticeably more
-        // reliable than the mini one used for catalog texts. Overridable with OpenAI:AssistantModel.
-        var model = config["OpenAI:AssistantModel"] is { Length: > 0 } m ? m : "gpt-4.1";
-        var body = await SendChatAsync(key, model, messages, tools, responseFormat, ct);
-
-        // An account's tokens-per-minute limit for the big model is small (30 000 on a new account) and one turn can
-        // take a good part of it: wait the moment OpenAI asks for and try again, then fall back to the mini model,
-        // which has a much larger limit — a slightly weaker answer beats an error in the middle of the setup.
+        // A rate limit is usually gone within a second: wait the moment OpenAI asks for, then try the smaller model
+        // rather than leave the administrator with an error in the middle of the setup.
         if (body.Status == System.Net.HttpStatusCode.TooManyRequests && !body.Text.Contains("insufficient_quota"))
         {
             if (RetryAfter(body.Text) is { } wait && wait <= TimeSpan.FromSeconds(6))
             {
                 await Task.Delay(wait + TimeSpan.FromMilliseconds(250), ct);
-                body = await SendChatAsync(key, model, messages, tools, responseFormat, ct);
+                body = await SendResponseAsync(key, model, instructions, input, tools, textFormat, effort, ct);
             }
-            if (body.Status == System.Net.HttpStatusCode.TooManyRequests && model != Model)
+            if (body.Status == System.Net.HttpStatusCode.TooManyRequests && FallbackModel != model)
             {
-                log.LogInformation("OpenAI rate limit on {Model}, falling back to {Fallback}", model, Model);
-                body = await SendChatAsync(key, Model, messages, tools, responseFormat, ct);
+                log.LogInformation("OpenAI rate limit on {Model}, falling back to {Fallback}", model, FallbackModel);
+                body = await SendResponseAsync(key, FallbackModel, instructions, input, tools, textFormat, effort, ct);
             }
         }
 
@@ -284,24 +381,37 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
             log.LogWarning("OpenAI {Status}: {Body}", (int)body.Status, Trim(body.Text));
             throw new InvalidOperationException(Explain(body.Status, body.Text));
         }
-        return JsonDocument.Parse(body.Text).RootElement.GetProperty("choices")[0].GetProperty("message").Clone();
+        var root = JsonDocument.Parse(body.Text).RootElement.Clone();
+        if (root.TryGetProperty("status", out var status) && status.GetString() == "incomplete")
+            log.LogWarning("OpenAI response incomplete: {Details}", root.TryGetProperty("incomplete_details", out var d) ? d.GetRawText() : "");
+        return root;
     }
 
-    async Task<(System.Net.HttpStatusCode Status, string Text)> SendChatAsync(string key, string model,
-        IEnumerable<object> messages, IEnumerable<object> tools, object? responseFormat, CancellationToken ct)
+    async Task<(System.Net.HttpStatusCode Status, string Text)> SendResponseAsync(string key, string model, string instructions,
+        IEnumerable<object> input, IEnumerable<object>? tools, object? textFormat, string effort, CancellationToken ct)
     {
         var payload = new Dictionary<string, object>
         {
             ["model"] = model,
-            ["messages"] = messages,
-            ["tools"] = tools,
-            // Strict tool schemas and parallel calls don't mix; one call per round, arrays inside a call instead.
-            ["parallel_tool_calls"] = false,
-            ["temperature"] = 0.4,
+            ["instructions"] = instructions,
+            ["input"] = input,
+            ["store"] = false,
         };
-        if (responseFormat is not null) payload["response_format"] = responseFormat;
+        // Older models (gpt-4.x) have no reasoning settings and reject them.
+        if (!model.StartsWith("gpt-4", StringComparison.Ordinal))
+        {
+            payload["reasoning"] = new { effort };
+            payload["include"] = new[] { "reasoning.encrypted_content" };
+        }
+        if (tools is not null)
+        {
+            payload["tools"] = tools;
+            // Strict tool schemas and parallel calls don't mix; one call per round, arrays inside a call instead.
+            payload["parallel_tool_calls"] = false;
+        }
+        if (textFormat is not null) payload["text"] = new { format = textFormat };
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
         {
             Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
         };
@@ -311,6 +421,27 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
         using var response = await client.SendAsync(request, ct);
         return (response.StatusCode, await response.Content.ReadAsStringAsync(ct));
     }
+
+    /// <summary>The text of a response's message items (what a Chat Completions reply called "content").</summary>
+    public static string OutputText(JsonElement response)
+    {
+        var sb = new StringBuilder();
+        foreach (var item in response.GetProperty("output").EnumerateArray())
+        {
+            if (item.GetProperty("type").GetString() != "message" || !item.TryGetProperty("content", out var parts)) continue;
+            foreach (var part in parts.EnumerateArray())
+            {
+                var type = part.GetProperty("type").GetString();
+                if (type == "output_text") sb.Append(part.GetProperty("text").GetString());
+                else if (type == "refusal") throw new InvalidOperationException("запрос отклонён моделью");
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>The function calls a response asks for, in order.</summary>
+    public static List<JsonElement> FunctionCalls(JsonElement response) =>
+        response.GetProperty("output").EnumerateArray().Where(i => i.GetProperty("type").GetString() == "function_call").ToList();
 
     /// <summary>"Please try again in 752ms" / "in 1.3s" from a rate-limit message.</summary>
     static TimeSpan? RetryAfter(string body)

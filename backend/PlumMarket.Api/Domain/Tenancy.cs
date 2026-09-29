@@ -79,6 +79,11 @@ public class AssistantMessage : IStoreOwned
     public string? Card { get; set; }
     /// <summary>Uploaded images the administrator attached (JSON array of /uploads URLs).</summary>
     public string? Attachments { get; set; }
+    /// <summary>
+    /// For a long text the administrator pasted: the product cards distilled from it (JSON). The assistant works from
+    /// this instead of the raw text — shorter, and structured the same way every time.
+    /// </summary>
+    public string? Digest { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 
@@ -95,6 +100,8 @@ public class AdminUser
     public Store Store { get; set; } = null!;
     public DateTime CreatedAt { get; set; }
     public DateTime LastLoginAt { get; set; }
+    /// <summary>When they finished or skipped the guided tour of the panel; until then it starts on their first visit.</summary>
+    public DateTime? TourCompletedAt { get; set; }
 }
 
 /// <summary>Admin-panel session. Only a hash of the bearer token is stored.</summary>

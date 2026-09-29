@@ -33,7 +33,7 @@ builder.Services.AddScoped<ChatService>();
 builder.Services.AddScoped<MarketingService>();
 builder.Services.AddScoped<ShopAuth>();
 builder.Services.AddScoped<CheckoutService>();
-builder.Services.AddHttpClient(nameof(AiContentService), c => c.Timeout = TimeSpan.FromSeconds(90));
+builder.Services.AddHttpClient(nameof(AiContentService), c => c.Timeout = TimeSpan.FromSeconds(180));
 builder.Services.AddSingleton<AiContentService>();
 // The first-run assistant: a conversation that sets the new shop up through the same rules as the admin pages.
 builder.Services.AddScoped<AssistantTools>();

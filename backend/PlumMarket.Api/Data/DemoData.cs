@@ -48,6 +48,8 @@ public static class DemoData
         {
             Name = AdminName, Phone = AdminPhone, PasswordHash = AdminAuth.HashPassword(AdminPassword),
             StoreId = store.Id, CreatedAt = store.CreatedAt, LastLoginAt = now,
+            // A presentation starts on the dashboard; the tour is one click away («Обучение»).
+            TourCompletedAt = now,
         });
 
         var settings = new StoreSettings

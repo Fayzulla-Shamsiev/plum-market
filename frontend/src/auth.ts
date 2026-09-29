@@ -12,7 +12,14 @@ export interface AdminStore {
   /** False until the first-run setup with the AI assistant is finished or skipped. */
   onboarded: boolean
 }
-export interface Admin { id: number; name: string; phone: string; store: AdminStore }
+export interface Admin {
+  id: number
+  name: string
+  phone: string
+  store: AdminStore
+  /** False until the guided tour of the panel has been finished or skipped. */
+  tourDone: boolean
+}
 
 const KEY = 'plum.admin.token'
 
@@ -94,6 +101,13 @@ export async function restore(): Promise<boolean> {
   }
   admin.value = await res.json() as Admin
   return true
+}
+
+/** The guided tour was finished or skipped — it won't start by itself again. */
+export async function markTourDone() {
+  if (admin.value) admin.value.tourDone = true
+  if (!adminToken.value) return
+  await fetch('/api/auth/tour', { method: 'POST', headers: { Authorization: `Bearer ${adminToken.value}` } }).catch(() => {})
 }
 
 export function forget() {
