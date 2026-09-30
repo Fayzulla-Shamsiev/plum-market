@@ -6,6 +6,7 @@ import Icon from '../../components/Icon.vue'
 import LocalizedEditor from '../../components/LocalizedEditor.vue'
 import SingleImage from '../../components/SingleImage.vue'
 import { loc } from '../../format'
+import PageHelp from '../../components/PageHelp.vue'
 
 const props = defineProps<{ id?: string }>()
 const router = useRouter()
@@ -79,7 +80,7 @@ async function save() {
   <div class="page narrow">
     <div class="page-head">
       <RouterLink to="/products/categories" class="btn btn-ghost btn-icon" aria-label="Назад"><Icon name="chevronLeft" /></RouterLink>
-      <h1>{{ isEdit ? 'Редактировать категорию' : 'Новая категория' }}</h1>
+      <h1>{{ isEdit ? 'Редактировать категорию' : 'Новая категория' }}<PageHelp /></h1>
     </div>
 
     <div v-if="loading" class="skeleton" style="height: 420px" />

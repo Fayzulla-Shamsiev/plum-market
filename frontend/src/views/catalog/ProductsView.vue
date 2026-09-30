@@ -9,6 +9,7 @@ import ProductThumb from '../../components/ProductThumb.vue'
 import { date, loc, money, stockStatusLabel } from '../../format'
 import { catalogBranch } from '../../store'
 import ImportModal from './ImportModal.vue'
+import PageHelp from '../../components/PageHelp.vue'
 
 const route = useRoute()
 const search = ref('')
@@ -72,7 +73,7 @@ async function remove(p: ProductRow) {
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Продукты</h1>
+      <h1>Продукты<PageHelp /></h1>
       <BranchSwitcher />
       <button class="btn" @click="importOpen = true"><Icon name="upload" />Импорт</button>
       <RouterLink to="/products/items/new" class="btn btn-primary"><Icon name="plus" />Добавить продукт</RouterLink>

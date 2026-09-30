@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { api, type Platforms } from '../../api'
 import { admin } from '../../auth'
 import Icon from '../../components/Icon.vue'
+import PageHelp from '../../components/PageHelp.vue'
 
 // Платформы → Веб-сайт: the shop's name and what it tells customers about itself. The same shop is behind the
 // Telegram bot, so everything here shows up in both.
@@ -47,7 +48,7 @@ async function save() {
 <template>
   <div class="page narrow">
     <div class="page-head">
-      <h1>Веб-сайт</h1>
+      <h1>Веб-сайт<PageHelp /></h1>
       <a v-if="data" class="btn btn-primary" :href="data.website.url" target="_blank" rel="noopener">
         <Icon name="branches" />Открыть магазин
       </a>

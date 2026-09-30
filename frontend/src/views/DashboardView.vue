@@ -14,6 +14,7 @@ import SetupChecklist from './SetupChecklist.vue'
 import { compactMoney, count, money, series, statusLabel } from '../format'
 import { periodFor, type Period } from '../period'
 import { useLookups } from '../store'
+import PageHelp from '../components/PageHelp.vue'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Filler, Tooltip, Legend)
 ChartJS.defaults.font.family = getComputedStyle(document.documentElement).fontFamily
@@ -103,7 +104,7 @@ const productMax = computed(() => Math.max(1, ...(data.value?.topProducts.map(p 
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Дашборд</h1>
+      <h1>Дашборд<PageHelp /></h1>
       <select v-model="branchId" class="select" aria-label="Филиал">
         <option value="">Все филиалы</option>
         <option v-for="b in lookups?.branches" :key="b.id" :value="b.id">{{ b.name }}</option>

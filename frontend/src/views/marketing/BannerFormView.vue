@@ -5,6 +5,7 @@ import { catalogApi, marketingApi, type Banner, type CategoryRow, type ProductRo
 import Icon from '../../components/Icon.vue'
 import { loc } from '../../format'
 import { useLookups } from '../../store'
+import PageHelp from '../../components/PageHelp.vue'
 
 const props = defineProps<{ id?: string }>()
 const router = useRouter()
@@ -85,7 +86,7 @@ async function save() {
   <div class="page">
     <div class="page-head">
       <RouterLink to="/marketing/banners" class="btn btn-ghost btn-icon" aria-label="Назад"><Icon name="chevronLeft" /></RouterLink>
-      <h1>{{ id ? 'Редактировать баннер' : 'Новый баннер' }}</h1>
+      <h1>{{ id ? 'Редактировать баннер' : 'Новый баннер' }}<PageHelp /></h1>
     </div>
     <div v-if="loading" class="skeleton" style="height: 500px" />
     <div v-else class="layout">

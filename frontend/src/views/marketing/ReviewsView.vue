@@ -5,6 +5,7 @@ import Icon from '../../components/Icon.vue'
 import Modal from '../../components/Modal.vue'
 import Pager from '../../components/Pager.vue'
 import { dateTime, loc } from '../../format'
+import PageHelp from '../../components/PageHelp.vue'
 
 const status = ref<'' | 'New' | 'Answered'>('')
 const rating = ref<number | ''>('')
@@ -48,7 +49,7 @@ async function sendReply() {
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Обзоры</h1>
+      <h1>Обзоры<PageHelp /></h1>
       <span v-if="data" class="avg"><span class="stars">★</span> {{ data.average.toLocaleString('ru-RU') }} средняя оценка</span>
     </div>
 

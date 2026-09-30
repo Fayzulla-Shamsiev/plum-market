@@ -72,12 +72,13 @@ const stopAdminWatch = watch(() => route.matched.length && !bare.value, admin =>
 // «?». Never inside the assistant or the storefront.
 const pageTour = computed(() => (bare.value ? null : (route.meta.tour as string | undefined) ?? null))
 watch([pageTour, () => admin.value?.id], ([page]) => {
-  // Leaving a page (e.g. with the browser's Back) ends its tour.
-  if (tourActive.value && tourPage.value !== page) endTour()
+  // Leaving a page (e.g. with the browser's Back) ends its tour. The full walkthrough moves between pages itself.
+  if (tourActive.value && tourPage.value !== 'overview' && tourPage.value !== page) endTour()
   if (page && admin.value && !tourActive.value && !tourSeen(page)) startTour(page)
 }, { immediate: true })
 watch(tourSidebar, open => { if (tourActive.value) menuOpen.value = open })
-const replayTour = () => pageTour.value && startTour(pageTour.value)
+// «?» at the bottom of the menu: the full walkthrough of every section. Each page's own tour is «?» by its title.
+const fullTour = () => startTour('overview')
 
 const toggle = (path: string) => (expanded.value = expanded.value === path ? null : path)
 
@@ -144,7 +145,7 @@ async function signOut() {
             <b>{{ admin?.name }}</b>
             <small>{{ phone }}</small>
           </span>
-          <button class="logout" data-tour="help" title="Подсказка по этой странице" aria-label="Подсказка по странице" :disabled="!pageTour" @click="replayTour">
+          <button class="logout" data-tour="help" title="Обзор всей панели по шагам" aria-label="Обзор всей панели" @click="fullTour">
             <Icon name="help" />
           </button>
           <button class="logout" title="Выйти" @click="signOut">

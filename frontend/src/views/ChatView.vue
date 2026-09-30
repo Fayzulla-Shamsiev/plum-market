@@ -6,6 +6,7 @@ import Icon from '../components/Icon.vue'
 import { count, loc, timeShort } from '../format'
 import { refreshChatUnread } from '../store'
 import ChatSettingsPanel from './chat/ChatSettingsPanel.vue'
+import PageHelp from '../components/PageHelp.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -174,7 +175,7 @@ const stars = (n: number) => '★'.repeat(n) + '☆'.repeat(5 - n)
   <div class="chat-page">
     <aside class="inbox" :class="{ hideOnMobile: activeId }">
       <div class="inbox-head">
-        <h1>Все чаты</h1>
+        <h1>Все чаты<PageHelp /></h1>
         <button class="btn btn-ghost btn-icon" title="Настройки чата" aria-label="Настройки чата" @click="settingsOpen = true">
           <Icon name="settings" />
         </button>

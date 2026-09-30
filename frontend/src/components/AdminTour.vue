@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { endTour, tourPage, tourSidebar } from '../tour'
 import { tours, type TourStep } from '../tours'
 import Icon from './Icon.vue'
@@ -17,6 +18,13 @@ const boxEl = ref<HTMLElement>()
 const box = ref({ top: 0, left: 0, width: 360 })
 const busy = ref(false)
 const mobile = () => window.innerWidth <= 960
+const router = useRouter()
+
+/** The pages the full walkthrough has shown so far — their own first-visit tours are then not needed. */
+const covered = () => steps.value.slice(0, index.value + 1)
+  .map(s => (s.route ? (router.resolve(s.route).meta.tour as string | undefined) : undefined))
+  .filter((p): p is string => !!p)
+const finish = () => endTour(covered())
 
 /** Waits for a page's element to appear: pages load their data after they open. */
 async function find(selectors: string[] | undefined): Promise<Element | null> {
@@ -37,6 +45,7 @@ async function show(i: number, direction = 1) {
   const s = steps.value[i]
   target.value = null
   rect.value = null
+  if (s.route && router.currentRoute.value.path !== s.route) await router.push(s.route)
   await nextTick()
   tourSidebar.value = !!s.menu && mobile()
   if (tourSidebar.value) await new Promise(r => setTimeout(r, 230)) // the drawer slides in
@@ -53,7 +62,7 @@ async function show(i: number, direction = 1) {
   place()
 }
 
-const next = () => (last.value ? endTour() : !busy.value && show(index.value + 1, 1))
+const next = () => (last.value ? finish() : !busy.value && show(index.value + 1, 1))
 const back = () => index.value > 0 && !busy.value && show(index.value - 1, -1)
 
 /** Keeps the spotlight on its element while the page scrolls, loads or the sidebar slides. */
@@ -91,7 +100,7 @@ function place() {
 }
 
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') endTour()
+  if (e.key === 'Escape') finish()
   else if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); next() }
   else if (e.key === 'ArrowLeft') back()
 }
@@ -117,7 +126,7 @@ onBeforeUnmount(() => {
     <section ref="boxEl" class="box" :class="{ center: !rect }" :style="{ top: `${box.top}px`, left: `${box.left}px`, width: `${box.width}px` }">
       <div class="box-top">
         <span class="count">{{ index + 1 }} / {{ steps.length }}</span>
-        <button class="skip" @click="endTour">{{ last ? 'Закрыть' : 'Пропустить' }}</button>
+        <button class="skip" @click="finish">{{ last ? 'Закрыть' : 'Пропустить' }}</button>
       </div>
       <h2>{{ step.title }}</h2>
       <p>{{ step.text }}</p>

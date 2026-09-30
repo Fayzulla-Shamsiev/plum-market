@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api, type Platforms } from '../../api'
 import AutoReplyEditor from '../../components/AutoReplyEditor.vue'
 import Icon from '../../components/Icon.vue'
+import PageHelp from '../../components/PageHelp.vue'
 
 // Платформы → Telegram-бот: the merchant's own bot from @BotFather becomes a second door into the same shop.
 // Connecting it points the bot's menu button at the storefront, which is the "Open Shop" button customers press.
@@ -93,7 +94,7 @@ async function run(action: 'connect' | 'disconnect') {
 <template>
   <div class="page narrow">
     <div class="page-head">
-      <h1>Telegram-бот</h1>
+      <h1>Telegram-бот<PageHelp /></h1>
       <a v-if="data?.telegram" class="btn btn-primary" :href="data.telegram.url" target="_blank" rel="noopener">
         <Icon name="bot" />Открыть бота
       </a>

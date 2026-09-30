@@ -6,6 +6,7 @@ import Icon from '../../components/Icon.vue'
 import { dateTime, money } from '../../format'
 import { catalogBranch } from '../../store'
 import DiscountModal from './DiscountModal.vue'
+import PageHelp from '../../components/PageHelp.vue'
 
 const rows = ref<DiscountRow[] | null>(null)
 const editing = ref<DiscountRow | null | 'new'>(null)
@@ -26,7 +27,7 @@ async function remove(d: DiscountRow) {
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Скидки</h1>
+      <h1>Скидки<PageHelp /></h1>
       <BranchSwitcher />
       <button class="btn btn-primary" @click="editing = 'new'"><Icon name="plus" />Добавить скидку</button>
     </div>

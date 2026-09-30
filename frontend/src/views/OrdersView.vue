@@ -9,6 +9,7 @@ import AssemblySheetModal from './orders/AssemblySheetModal.vue'
 import AutoReplyModal from './orders/AutoReplyModal.vue'
 import ExportModal from './orders/ExportModal.vue'
 import OrderDrawer from './orders/OrderDrawer.vue'
+import PageHelp from '../components/PageHelp.vue'
 
 // Orders from the storefront. The store moves each one through the MVP flow step by step:
 // Новый → В сборке → Готов → Передан в доставку → В пути → Доставлен → Завершён (pickup: Готов к выдаче → Завершён).
@@ -126,7 +127,7 @@ const who = (o: OrderRow) => o.recipient?.name ?? o.customer.fullName
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Заказы</h1>
+      <h1>Заказы<PageHelp /></h1>
       <div class="seg" role="tablist">
         <button role="tab" :aria-selected="view === 'board'" :class="{ on: view === 'board' }" @click="view = 'board'"><Icon name="dashboard" />Доска</button>
         <button role="tab" :aria-selected="view === 'list'" :class="{ on: view === 'list' }" @click="view = 'list'"><Icon name="orders" />Список</button>

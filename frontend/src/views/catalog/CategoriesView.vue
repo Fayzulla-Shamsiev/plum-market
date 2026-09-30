@@ -6,6 +6,7 @@ import Icon from '../../components/Icon.vue'
 import ProductThumb from '../../components/ProductThumb.vue'
 import { date, loc } from '../../format'
 import { catalogBranch } from '../../store'
+import PageHelp from '../../components/PageHelp.vue'
 
 const rows = ref<CategoryRow[] | null>(null)
 const error = ref('')
@@ -48,7 +49,7 @@ async function remove(c: CategoryRow) {
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Категории</h1>
+      <h1>Категории<PageHelp /></h1>
       <BranchSwitcher />
       <RouterLink to="/products/categories/new" class="btn btn-primary"><Icon name="plus" />Добавить категорию</RouterLink>
     </div>

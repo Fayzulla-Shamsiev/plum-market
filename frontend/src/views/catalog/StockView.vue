@@ -7,6 +7,7 @@ import ProductThumb from '../../components/ProductThumb.vue'
 import { dateTime, loc, stockStatusLabel } from '../../format'
 import { catalogBranch } from '../../store'
 import SalesHistoryPanel from './SalesHistoryPanel.vue'
+import PageHelp from '../../components/PageHelp.vue'
 
 type Field = 'costPrice' | 'price' | 'weightGrams' | 'quantity'
 
@@ -53,7 +54,7 @@ const onInput = (r: StockRow, f: Field) => (ev: Event) => patch(r, f, (ev.target
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Склад</h1>
+      <h1>Склад<PageHelp /></h1>
       <BranchSwitcher require-branch />
     </div>
     <div v-if="error" class="error-banner">{{ error }}</div>

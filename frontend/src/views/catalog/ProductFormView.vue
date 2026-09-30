@@ -7,6 +7,7 @@ import LocalizedEditor from '../../components/LocalizedEditor.vue'
 import MediaUploader from '../../components/MediaUploader.vue'
 import { loc, money, units } from '../../format'
 import { useLookups } from '../../store'
+import PageHelp from '../../components/PageHelp.vue'
 
 const props = defineProps<{ id?: string }>()
 const router = useRouter()
@@ -99,7 +100,7 @@ async function save() {
   <div class="page">
     <div class="page-head">
       <RouterLink to="/products/items" class="btn btn-ghost btn-icon" aria-label="Назад"><Icon name="chevronLeft" /></RouterLink>
-      <h1>{{ isEdit ? loc(form.name) || 'Редактировать продукт' : 'Новый продукт' }}</h1>
+      <h1>{{ isEdit ? loc(form.name) || 'Редактировать продукт' : 'Новый продукт' }}<PageHelp /></h1>
     </div>
     <div v-if="error" class="error-banner">{{ error }}</div>
     <div v-if="loading" class="skeleton" style="height: 520px" />

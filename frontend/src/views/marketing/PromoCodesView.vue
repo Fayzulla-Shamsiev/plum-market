@@ -4,6 +4,7 @@ import { marketingApi, type PromoRow } from '../../api'
 import Icon from '../../components/Icon.vue'
 import { count, date, money } from '../../format'
 import PromoModal from './PromoModal.vue'
+import PageHelp from '../../components/PageHelp.vue'
 
 const rows = ref<PromoRow[] | null>(null)
 const editing = ref<PromoRow | 'new' | null>(null)
@@ -35,7 +36,7 @@ async function runCheck() {
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Промокоды</h1>
+      <h1>Промокоды<PageHelp /></h1>
       <button class="btn btn-primary" @click="editing = 'new'"><Icon name="plus" />Добавить промокод</button>
     </div>
 

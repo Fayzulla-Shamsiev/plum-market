@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { marketingApi, type BannerRow } from '../../api'
 import Icon from '../../components/Icon.vue'
 import { date } from '../../format'
+import PageHelp from '../../components/PageHelp.vue'
 
 const rows = ref<BannerRow[] | null>(null)
 async function load() { rows.value = await marketingApi.banners() }
@@ -31,7 +32,7 @@ async function remove(b: BannerRow) {
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Баннеры</h1>
+      <h1>Баннеры<PageHelp /></h1>
       <RouterLink to="/marketing/banners/new" class="btn btn-primary"><Icon name="plus" />Добавить баннер</RouterLink>
     </div>
     <div v-if="!rows" class="skeleton" style="height: 300px" />

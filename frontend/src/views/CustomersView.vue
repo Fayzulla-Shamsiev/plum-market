@@ -8,6 +8,7 @@ import { count, date, relative } from '../format'
 
 import BonusSettingsModal from './customers/BonusSettingsModal.vue'
 import CustomerDrawer from './customers/CustomerDrawer.vue'
+import PageHelp from '../components/PageHelp.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -48,7 +49,7 @@ const openChat = (c: CustomerRow) => router.push({ path: '/chat', query: { custo
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>Клиенты</h1>
+      <h1>Клиенты<PageHelp /></h1>
       <button class="btn" @click="bonusOpen = true"><Icon name="gift" />Настройки баллов</button>
     </div>
 

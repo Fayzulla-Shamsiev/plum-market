@@ -5,6 +5,7 @@ import { api, type BranchInput, type BranchRow, type StoreSettings } from '../ap
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
 import { count } from '../format'
+import PageHelp from '../components/PageHelp.vue'
 
 // "Магазин": everything the storefront shows about the store — О нас, contacts, delivery price and terms, return
 // terms — plus the order time limit and the branches (pickup points and stock locations).
@@ -101,7 +102,7 @@ async function removeBranch(b: BranchRow) {
 <template>
   <div class="page narrow">
     <div class="page-head">
-      <h1>Магазин</h1>
+      <h1>Магазин<PageHelp /></h1>
       <a class="btn btn-ghost" href="/about" target="_blank" rel="noopener"><Icon name="chevronRight" />Как это видит покупатель</a>
     </div>
     <div v-if="error" class="error-banner">{{ error }}</div>
