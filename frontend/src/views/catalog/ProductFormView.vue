@@ -106,18 +106,18 @@ async function save() {
 
     <form v-else class="layout" @submit.prevent="save">
       <div class="main">
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Название и описание">
           <h2>Название и описание</h2>
           <LocalizedEditor v-model:name="form.name" v-model:description="form.description" kind="product"
                            :context="{ category: categoryName, attributes: form.attributes, unit: form.unit, weightGrams: form.weightGrams }" />
         </section>
 
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Фото и видео">
           <h2>Фото и видео</h2>
           <MediaUploader v-model="form.media" />
         </section>
 
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Цена">
           <h2>Цена</h2>
           <div class="grid3">
             <label class="field"><span>Цена, сум *</span><input v-model.number="form.price" type="number" min="1" class="input" required /></label>
@@ -132,7 +132,7 @@ async function save() {
           <p v-if="discountPct" class="hint">Покупатель увидит скидку −{{ discountPct }}% (зачёркнутая цена {{ money(form.oldPrice!) }})</p>
         </section>
 
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Варианты товара">
           <div class="sec-head">
             <h2>Варианты товара</h2>
             <button type="button" class="btn btn-sm" @click="form.variants.push({ name: '', price: null, sku: null })"><Icon name="plus" />Добавить</button>
@@ -146,7 +146,7 @@ async function save() {
           </div>
         </section>
 
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Дополнительные характеристики">
           <div class="sec-head">
             <h2>Дополнительные характеристики</h2>
             <button type="button" class="btn btn-sm" @click="form.attributes.push({ name: '', value: '' })"><Icon name="plus" />Добавить</button>
@@ -159,7 +159,7 @@ async function save() {
           <p v-if="!form.attributes.length" class="faint small">Нет характеристик</p>
         </section>
 
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Размеры и вес">
           <h2>Размеры и вес</h2>
           <div class="grid4">
             <label class="field"><span>Вес, г</span><input v-model.number="form.weightGrams" type="number" min="0" class="input" /></label>

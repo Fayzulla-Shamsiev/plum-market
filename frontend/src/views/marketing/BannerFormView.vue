@@ -107,7 +107,7 @@ async function save() {
           </label>
         </section>
 
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Изображение или видео">
           <h2>Изображение или видео</h2>
           <div class="media">
             <div v-for="kind in (['mobile', 'desktop'] as const)" :key="kind" class="slot">
@@ -127,7 +127,7 @@ async function save() {
           </div>
         </section>
 
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Переход по нажатию">
           <h2>Переход по нажатию</h2>
           <div class="seg">
             <button v-for="t in (['None', 'Category', 'Product', 'Url'] as const)" :key="t" type="button" :class="{ on: form.linkType === t }"

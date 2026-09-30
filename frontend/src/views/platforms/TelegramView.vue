@@ -110,7 +110,7 @@ async function run(action: 'connect' | 'disconnect') {
 
       <!-- ---------------- Бот: подключение ---------------- -->
       <template v-if="tab === 'bot'">
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Бот подключён">
           <div class="card-head"><h2>Бот подключён</h2><span class="card-sub">магазин открывается внутри Telegram</span></div>
           <div class="bot">
             <div class="who">
@@ -142,7 +142,7 @@ async function run(action: 'connect' | 'disconnect') {
           </div>
         </section>
 
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Другой бот">
           <div class="card-head"><h2>Другой бот</h2><span class="card-sub">текущий бот перестанет открывать магазин</span></div>
           <label class="field">
             <span>Токен из @BotFather</span>
@@ -156,7 +156,7 @@ async function run(action: 'connect' | 'disconnect') {
 
       <!-- ---------------- Сообщения бота ---------------- -->
       <template v-else-if="tab === 'messages'">
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="До нажатия «Начать»">
           <div class="card-head">
             <h2>До нажатия «Начать»</h2>
             <span class="card-sub">описание бота в пустом чате</span>
@@ -168,7 +168,7 @@ async function run(action: 'connect' | 'disconnect') {
           <p class="faint small">Это первое, что видит покупатель, открыв бота. До 400 символов.</p>
         </section>
 
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Приветствие после «Начать»">
           <div class="card-head">
             <h2>Приветствие после «Начать»</h2>
             <span class="card-sub">ответ бота на /start</span>
@@ -193,7 +193,7 @@ async function run(action: 'connect' | 'disconnect') {
 
       <!-- ---------------- Автоответчик ---------------- -->
       <template v-else>
-        <section class="card card-pad">
+        <section class="card card-pad" data-tour="Сообщения о заказе">
           <div class="card-head">
             <h2>Сообщения о заказе</h2>
             <span class="card-sub">на каждом шаге — в чат магазина и в Telegram</span>

@@ -1,156 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { admin } from '../auth'
-import { endTour, tourActive, tourSidebar } from '../tour'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { endTour, tourPage, tourSidebar } from '../tour'
+import { tours, type TourStep } from '../tours'
 import Icon from './Icon.vue'
 
-// Guided tour of the admin panel: the page dims, one feature is spotlit, and a box explains what it does and what it
-// keeps. Steps either point at a menu item (the page opens behind it) or at a part of that page.
+// The guided tour of the page the administrator is on (tours.ts): the page dims, one part of it is spotlit, and a box
+// explains what it does and what it keeps. Steps whose element isn't on the page are skipped or shown centred.
 
-interface Step {
-  /** Page to open for this step. */
-  route?: string
-  /** CSS selectors tried in order; none (or none found) = the box sits in the middle of the screen. */
-  target?: string[]
-  /** Menu steps need the sidebar, which is a drawer on a phone. */
-  menu?: boolean
-  title: string
-  text: string
-}
-
-const store = computed(() => admin.value?.store.name ?? 'вашего магазина')
-const nav = (path: string) => [`[data-tour="nav-${path}"]`]
-
-const steps = computed<Step[]>(() => [
-  {
-    route: '/dashboard',
-    title: 'Добро пожаловать в панель управления',
-    text: `За пару минут покажем, где что находится в магазине «${store.value}»: заказы, товары, клиенты, маркетинг и настройки. ` +
-      'Листайте кнопкой «Далее» или стрелками на клавиатуре. Тур можно пропустить и пройти позже — кнопка «?» внизу меню слева.',
-  },
-  {
-    route: '/dashboard', target: nav('/dashboard'), menu: true, title: 'Дашборд',
-    text: 'Главная страница — сводка по магазину. Здесь собрана статистика за выбранный период: выручка, себестоимость, прибыль, ' +
-      'заказы, клиенты и полученные деньги.',
-  },
-  {
-    route: '/dashboard', target: ['main .page-head'], title: 'Период и филиал',
-    text: 'Выберите период — сегодня, неделя, месяц, квартал, год или свои даты — и филиал. Все цифры и графики на странице пересчитаются.',
-  },
-  {
-    route: '/dashboard', target: ['main .grid-kpi'], title: 'Ключевые показатели',
-    text: 'Выручка и прибыль считаются по завершённым заказам. Ниже — графики доходов, заказы на карте, популярные товары и лучшие клиенты.',
-  },
-  {
-    route: '/orders', target: nav('/orders'), menu: true, title: 'Заказы',
-    text: 'Все заказы с сайта и из Telegram. У каждого хранятся товары, клиент, адрес или филиал самовывоза, сумма, промокод и история статусов. ' +
-      'Число рядом с пунктом меню — новые заказы, которые ждут вас.',
-  },
-  {
-    route: '/orders', target: ['main .board', 'main .card:not(.toolbar-card)'], title: 'Доска заказов',
-    text: 'Заказы разложены по статусам: Новый → В сборке → Готов → Передан в доставку → В пути → Доставлен → Завершён. ' +
-      'Откройте заказ, чтобы перевести его на следующий шаг, — покупатель сразу получит уведомление. Просроченные заказы подсвечиваются.',
-  },
-  {
-    route: '/orders', target: ['main .page-head'], title: 'Список, сообщения, сборка, экспорт',
-    text: '«Доска» и «Список» — два вида одних заказов. «Сообщения покупателю» — тексты уведомлений для каждого статуса, ' +
-      '«Лист сборки» — что собрать по филиалу, «Экспорт» — выгрузка в Excel. Ниже — поиск по номеру, имени или телефону и фильтры.',
-  },
-  {
-    route: '/customers', target: nav('/customers'), menu: true, title: 'Клиенты',
-    text: 'База покупателей: имя, телефон, число заказов, сумма покупок, бонусные баллы и платформа, с которой пришёл клиент. ' +
-      'Отсюда можно открыть карточку клиента или написать ему в чат.',
-  },
-  {
-    route: '/customers', target: ['main .page-head .btn'], title: 'Бонусные баллы',
-    text: 'Включите бонусную программу: покупатель получает баллы за покупки и оплачивает ими следующие заказы (1 балл = 1 сум). ' +
-      'Здесь задаётся, за какую сумму начисляется балл.',
-  },
-  {
-    route: '/chat', target: nav('/chat'), menu: true, title: 'Чат',
-    text: 'Переписка с покупателями с сайта и из Telegram в одном окне. Хранится вся история диалогов и вложения; можно включить ' +
-      'автоответ и сразу видеть, о каком заказе спрашивает клиент.',
-  },
-  {
-    route: '/products/categories', target: nav('/products/categories'), menu: true, title: 'Каталог → Категории',
-    text: 'Разделы витрины, по которым покупатель ищет товары. У категории есть название на русском и узбекском, картинка, баннер ' +
-      'и порядок товаров. Категории можно вкладывать друг в друга.',
-  },
-  {
-    route: '/products/items', target: nav('/products/items'), menu: true, title: 'Каталог → Товары',
-    text: 'Карточки товаров: названия и описания на трёх языках, фото и видео, цена, старая цена, себестоимость, варианты, ' +
-      'характеристики, вес и размеры, филиалы, где товар продаётся.',
-  },
-  {
-    route: '/products/items', target: ['main .page-head'], title: 'Добавление и импорт',
-    text: '«Добавить продукт» открывает карточку, где ИИ-кнопки переведут текст и напишут описание. Много товаров сразу — через ' +
-      'импорт из Excel. Переключатель «Филиал» показывает ассортимент одной точки.',
-  },
-  {
-    route: '/products/discounts', target: nav('/products/discounts'), menu: true, title: 'Каталог → Скидки',
-    text: 'Акции на выбранные товары: скидка в процентах или фиксированной суммой, срок действия, минимальная сумма заказа и филиалы, ' +
-      'где действует акция. Покупатель видит зачёркнутую цену.',
-  },
-  {
-    route: '/products/stock', target: nav('/products/stock'), menu: true, title: 'Каталог → Склад',
-    text: 'Остатки по каждому филиалу. Для товара хранится статус — безлимитный, ограничено или нет в наличии, — количество, ' +
-      'цена закупки и продажи, маржа и скорость продаж.',
-  },
-  {
-    route: '/products/stock', target: ['main .card'], title: 'Таблица остатков',
-    text: 'Значения меняются прямо в таблице и сохраняются сразу. Когда остаток заканчивается, товар в этом филиале становится недоступен ' +
-      'для заказа. Нажмите на товар — откроется история его продаж по месяцам.',
-  },
-  {
-    route: '/marketing/promocodes', target: nav('/marketing/promocodes'), menu: true, title: 'Маркетинг → Промокоды',
-    text: 'Коды, которые покупатель вводит при оформлении заказа: скидка в процентах или суммой, лимит использований, минимальный заказ, ' +
-      'срок, «только на первый заказ». Хранится, сколько раз код уже использовали.',
-  },
-  {
-    route: '/marketing/banners', target: nav('/marketing/banners'), menu: true, title: 'Маркетинг → Баннеры',
-    text: 'Рекламные картинки на главной странице магазина и в категориях — отдельно для телефона и компьютера — с переходом в категорию, ' +
-      'на товар или по ссылке.',
-  },
-  {
-    route: '/marketing/reviews', target: nav('/marketing/reviews'), menu: true, title: 'Маркетинг → Отзывы',
-    text: 'Оценки и отзывы покупателей о товарах. Отвечайте на них — ответ магазина увидят все на странице товара.',
-  },
-  {
-    route: '/platforms/website', target: nav('/platforms/website'), menu: true, title: 'Платформы → Веб-сайт',
-    text: 'Ваш магазин в интернете. Здесь хранятся название магазина, текст «О нас» и условия возврата — их покупатель открывает из профиля.',
-  },
-  {
-    route: '/platforms/telegram', target: nav('/platforms/telegram'), menu: true, title: 'Платформы → Telegram-бот',
-    text: 'Подключите своего бота из @BotFather — магазин откроется прямо в Telegram кнопкой «Open Shop». Здесь же тексты бота и ' +
-      'автоответчик: бот сам пишет покупателю, когда меняется статус заказа.',
-  },
-  {
-    route: '/store', target: nav('/store'), menu: true, title: 'Магазин',
-    text: 'Контакты, стоимость и условия доставки, лимит времени на заказ и филиалы с адресами на карте. Филиал — это точка самовывоза ' +
-      'и склад, у которого свои остатки.',
-  },
-  {
-    route: '/store', target: ['[data-tour="assistant"]'], menu: true, title: 'ИИ-помощник',
-    text: 'Помощник, который знает ваш магазин: добавит товары из текста или фото, поправит описания, настроит доставку и подскажет, ' +
-      'как получить больше заказов.',
-  },
-  {
-    route: '/store', target: ['[data-tour="shop"]'], menu: true, title: 'Открыть магазин',
-    text: 'Так ваш магазин видят покупатели. Всё, что вы меняете в панели, появляется на сайте сразу.',
-  },
-  {
-    route: '/store', target: ['[data-tour="account"]'], menu: true, title: 'Аккаунт и обучение',
-    text: 'Ваше имя и телефон, кнопка «?», чтобы пройти этот тур ещё раз, и выход из панели.',
-  },
-  {
-    route: '/dashboard',
-    title: 'Готово!',
-    text: 'Теперь вы знаете, где что находится. Начните с товаров и первого заказа, а если что-то непонятно — спросите ИИ-помощника.',
-  },
-])
-
-const router = useRouter()
+const steps = computed<TourStep[]>(() => tours[tourPage.value ?? ''] ?? [])
 const index = ref(0)
 const step = computed(() => steps.value[index.value])
 const last = computed(() => index.value === steps.value.length - 1)
@@ -174,26 +31,30 @@ async function find(selectors: string[] | undefined): Promise<Element | null> {
   return null
 }
 
-async function show(i: number) {
+async function show(i: number, direction = 1) {
   busy.value = true
   index.value = i
   const s = steps.value[i]
   target.value = null
   rect.value = null
-  if (s.route && router.currentRoute.value.path !== s.route) await router.push(s.route)
   await nextTick()
   tourSidebar.value = !!s.menu && mobile()
   if (tourSidebar.value) await new Promise(r => setTimeout(r, 230)) // the drawer slides in
   const el = await find(s.target)
   if (index.value !== i) return
+  // Nothing to point at (e.g. «Первые шаги» once orders come in): an optional step is simply passed.
+  if (!el && s.optional) {
+    const n = i + direction
+    if (n >= 0 && n < steps.value.length) return show(n, direction)
+  }
   if (el && !s.menu) el.scrollIntoView({ block: 'center', behavior: 'instant' as ScrollBehavior })
   target.value = el
   busy.value = false
   place()
 }
 
-const next = () => (last.value ? endTour() : !busy.value && show(index.value + 1))
-const back = () => index.value > 0 && !busy.value && show(index.value - 1)
+const next = () => (last.value ? endTour() : !busy.value && show(index.value + 1, 1))
+const back = () => index.value > 0 && !busy.value && show(index.value - 1, -1)
 
 /** Keeps the spotlight on its element while the page scrolls, loads or the sidebar slides. */
 let frame = 0
@@ -237,18 +98,18 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', onKey)
-  show(0)
+  // The page has only just opened: give it a moment to render before looking for its parts.
+  setTimeout(() => show(0), 250)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   cancelAnimationFrame(frame)
   tourSidebar.value = false
 })
-watch(tourActive, on => { if (!on) cancelAnimationFrame(frame) })
 </script>
 
 <template>
-  <div class="tour" role="dialog" aria-modal="true" :aria-label="`Обучение: ${step.title}`">
+  <div v-if="step" class="tour" role="dialog" aria-modal="true" :aria-label="`Подсказка: ${step.title}`">
     <!-- Catches clicks: during the tour the panel is to be looked at, not used. -->
     <div class="catch" :class="{ plain: !rect }" />
     <div v-if="rect" class="spot" :style="{ top: `${rect.top}px`, left: `${rect.left}px`, width: `${rect.width}px`, height: `${rect.height}px` }" />
@@ -266,7 +127,7 @@ watch(tourActive, on => { if (!on) cancelAnimationFrame(frame) })
       <div class="box-foot">
         <button v-if="index > 0" class="btn btn-ghost" :disabled="busy" @click="back"><Icon name="chevronLeft" />Назад</button>
         <button class="btn btn-primary" :disabled="busy && !last" @click="next">
-          {{ index === 0 ? 'Начать' : last ? 'Начать работу' : 'Далее' }}<Icon v-if="!last" name="chevronRight" />
+          {{ last ? 'Понятно' : 'Далее' }}<Icon v-if="!last" name="chevronRight" />
         </button>
       </div>
     </section>

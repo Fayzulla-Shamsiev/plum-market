@@ -108,7 +108,7 @@ async function removeBranch(b: BranchRow) {
     <div v-if="!s" class="skeleton" style="height: 500px" />
 
     <form v-if="s" class="stack" @submit.prevent="save">
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="Контакты">
         <div class="card-head"><h2>Контакты</h2><span class="card-sub">страница «Связаться с нами»</span></div>
         <div class="grid">
           <label class="field"><span>Контактный телефон</span><input v-model="s.phone" class="input" maxlength="40" placeholder="+998 78 000 00 00" /></label>
@@ -118,7 +118,7 @@ async function removeBranch(b: BranchRow) {
           <RouterLink to="/platforms/website">Платформы → Веб-сайт</RouterLink>.</p>
       </section>
 
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="Доставка">
         <div class="card-head"><h2>Доставка</h2><span class="card-sub">стоимость в оформлении заказа и страница «Условия доставки»</span></div>
         <div class="grid">
           <label class="field"><span>Стоимость доставки, сум</span><input v-model.number="s.deliveryFee" class="input" type="number" min="0" step="1000" /></label>
@@ -131,7 +131,7 @@ async function removeBranch(b: BranchRow) {
       </section>
 
       
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="Заказы">
         <div class="card-head"><h2>Заказы</h2></div>
         <label class="field narrow-field"><span>Считать заказ просроченным, если он «Новый» или «В сборке» дольше, минут</span>
           <input v-model.number="s.overdueMinutes" class="input" type="number" min="5" max="1440" />
@@ -144,7 +144,7 @@ async function removeBranch(b: BranchRow) {
       </div>
     </form>
 
-    <section class="card card-pad branches">
+    <section class="card card-pad branches" data-tour="Филиалы">
       <div class="card-head">
         <h2>Филиалы</h2><span class="card-sub">самовывоз, склад и доставка</span>
         <button class="btn btn-sm btn-primary" @click="openBranch()"><Icon name="plus" />Добавить</button>

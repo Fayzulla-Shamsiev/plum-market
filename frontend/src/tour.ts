@@ -1,20 +1,23 @@
-import { ref } from 'vue'
-import { markTourDone } from './auth'
+import { computed, ref } from 'vue'
+import { markTourSeen } from './auth'
+import { tours } from './tours'
 
-// Guided tour of the admin panel. The panel dims, one feature at a time is spotlit, and a box explains what it does
-// and what it keeps. It starts by itself on an administrator's first visit to the panel and can be replayed from
-// «Обучение» in the sidebar.
+// Guided tours of the admin panel, one per page (see tours.ts). A page's tour starts by itself the first time the
+// administrator opens it and can be replayed with «?» in the sidebar.
 
-export const tourActive = ref(false)
-/** On a phone the sidebar is a drawer: the tour opens it for menu steps and closes it for page steps. */
+/** The page whose tour is running, or null. */
+export const tourPage = ref<string | null>(null)
+export const tourActive = computed(() => tourPage.value !== null)
+/** On a phone the sidebar is a drawer: the tour opens it for steps that point into the menu. */
 export const tourSidebar = ref(false)
 
-export function startTour() {
-  tourActive.value = true
+export function startTour(page: string) {
+  if (tours[page]?.length) tourPage.value = page
 }
 
 export function endTour() {
-  tourActive.value = false
+  const page = tourPage.value
+  tourPage.value = null
   tourSidebar.value = false
-  markTourDone()
+  if (page) markTourSeen(page)
 }

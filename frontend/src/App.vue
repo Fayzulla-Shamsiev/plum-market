@@ -3,9 +3,9 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AdminTour from './components/AdminTour.vue'
 import Icon from './components/Icon.vue'
-import { admin, logout } from './auth'
+import { admin, logout, tourSeen } from './auth'
 import { chatUnread, newOrders, useLookups, watchChatUnread, watchNewOrders } from './store'
-import { startTour, tourActive, tourSidebar } from './tour'
+import { endTour, startTour, tourActive, tourPage, tourSidebar } from './tour'
 
 interface Section { path: string; label: string; icon: string; ready?: boolean; children?: { path: string; label: string }[] }
 
@@ -68,12 +68,16 @@ const stopAdminWatch = watch(() => route.matched.length && !bare.value, admin =>
   queueMicrotask(() => stopAdminWatch())
 }, { immediate: true })
 
-// Guided tour: starts by itself the first time an administrator reaches the panel (after the AI assistant), and
-// again from «Обучение». Never inside the assistant or the storefront.
-watch([() => admin.value?.tourDone, bare], ([done, isBare]) => {
-  if (done === false && !isBare && !tourActive.value) startTour()
+// Guided tours, one per page: a page's tour starts by itself the first time the administrator opens it, and again from
+// «?». Never inside the assistant or the storefront.
+const pageTour = computed(() => (bare.value ? null : (route.meta.tour as string | undefined) ?? null))
+watch([pageTour, () => admin.value?.id], ([page]) => {
+  // Leaving a page (e.g. with the browser's Back) ends its tour.
+  if (tourActive.value && tourPage.value !== page) endTour()
+  if (page && admin.value && !tourActive.value && !tourSeen(page)) startTour(page)
 }, { immediate: true })
 watch(tourSidebar, open => { if (tourActive.value) menuOpen.value = open })
+const replayTour = () => pageTour.value && startTour(pageTour.value)
 
 const toggle = (path: string) => (expanded.value = expanded.value === path ? null : path)
 
@@ -140,7 +144,7 @@ async function signOut() {
             <b>{{ admin?.name }}</b>
             <small>{{ phone }}</small>
           </span>
-          <button class="logout" title="Обучение: как устроена панель" aria-label="Обучение" @click="startTour">
+          <button class="logout" data-tour="help" title="Подсказка по этой странице" aria-label="Подсказка по странице" :disabled="!pageTour" @click="replayTour">
             <Icon name="help" />
           </button>
           <button class="logout" title="Выйти" @click="signOut">
@@ -151,7 +155,7 @@ async function signOut() {
       </div>
     </aside>
     <div v-if="menuOpen" class="scrim" @click="menuOpen = false" />
-    <AdminTour v-if="tourActive" />
+    <AdminTour v-if="tourActive" :key="tourPage ?? ''" />
     <main class="main">
       <button class="btn btn-ghost btn-icon mobile-menu" aria-label="Меню" @click="menuOpen = true">
         <Icon name="menu" />

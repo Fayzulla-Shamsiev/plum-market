@@ -84,12 +84,12 @@ async function save() {
 
     <div v-if="loading" class="skeleton" style="height: 420px" />
     <form v-else class="stack" @submit.prevent="save">
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="Название и описание">
         <h2>Название и описание</h2>
         <LocalizedEditor v-model:name="form.name" v-model:description="form.description" kind="category" />
       </section>
 
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="Расположение в каталоге">
         <h2>Расположение в каталоге</h2>
         <div class="seg-choice">
           <label :class="{ on: mode === 'root' }"><input v-model="mode" type="radio" value="root" /><b>Новая категория</b><small>Отдельный раздел в меню магазина</small></label>
@@ -107,12 +107,12 @@ async function save() {
         </label>
       </section>
 
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="Изображение">
         <h2>Изображение</h2>
         <SingleImage v-model="form.imageUrl" label="Изображение категории" />
       </section>
 
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="Расположение товаров">
         <h2>Расположение товаров</h2>
         <div class="layouts">
           <label v-for="l in layouts" :key="l.value" class="layout" :class="{ on: form.layout === l.value }">

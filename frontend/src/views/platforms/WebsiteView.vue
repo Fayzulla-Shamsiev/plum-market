@@ -56,18 +56,18 @@ async function save() {
     <div v-if="!data" class="skeleton" style="height: 420px" />
 
     <form v-else class="stack" @submit.prevent="save">
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="Название магазина">
         <div class="card-head"><h2>Название магазина</h2><span class="card-sub">его видят покупатели</span></div>
         <input v-model="name" class="input" maxlength="80" required />
       </section>
 
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="О нас">
         <div class="card-head"><h2>О нас</h2><span class="card-sub">покупатель открывает из профиля</span></div>
         <textarea v-model="about" class="input area" rows="6" maxlength="4000"
           placeholder="Чем вы занимаетесь, что продаёте и почему у вас стоит покупать." />
       </section>
 
-      <section class="card card-pad">
+      <section class="card card-pad" data-tour="Условия возврата и обмена">
         <div class="card-head"><h2>Условия возврата и обмена</h2><span class="card-sub">покупатель открывает из профиля</span></div>
         <textarea v-model="returnTerms" class="input area" rows="8" maxlength="8000"
           placeholder="В какой срок принимаете товар обратно, что для этого нужно и как возвращаете деньги." />

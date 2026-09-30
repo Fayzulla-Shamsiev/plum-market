@@ -19,8 +19,8 @@ public class AuthController(AppDbContext db, AdminAuth auth, StoreLinks links) :
     public record RegisterRequest(string Name, string Phone, string Password, string? StoreName);
     public record LoginRequest(string Phone, string Password);
     public record Session(string Token, AdminDto Admin);
-    /// <param name="TourDone">False until the guided tour of the panel has been finished or skipped.</param>
-    public record AdminDto(int Id, string Name, string Phone, StoreDto Store, bool TourDone);
+    /// <param name="ToursSeen">Panel pages whose guided tour was already shown ("*" = all).</param>
+    public record AdminDto(int Id, string Name, string Phone, StoreDto Store, List<string> ToursSeen);
     /// <param name="Onboarded">False until the first-run setup with the AI assistant is finished or skipped.</param>
     public record StoreDto(int Id, string Name, string Slug, string Url, bool Onboarded);
 
@@ -86,14 +86,22 @@ public class AuthController(AppDbContext db, AdminAuth auth, StoreLinks links) :
                 picks.Take(4).ToList(), picks.Skip(2).Take(6).Reverse().ToList()));
     }
 
-    /// <summary>The guided tour was finished or skipped: it won't start by itself again, on any device.</summary>
+    public record TourBody(string Page);
+
+    /// <summary>A page's guided tour was finished or skipped: it won't start by itself again there, on any device.</summary>
     [HttpPost("tour")]
-    public async Task<IActionResult> TourDone()
+    public async Task<IActionResult> TourSeen(TourBody body)
     {
         var admin = await auth.CurrentAsync(Request);
         if (admin is null) return Unauthorized(new { error = "Войдите в панель управления.", code = "unauthorized" });
-        admin.TourCompletedAt ??= DateTime.Now;
-        await db.SaveChangesAsync();
+        var page = (body.Page ?? "").Trim().ToLowerInvariant();
+        if (!System.Text.RegularExpressions.Regex.IsMatch(page, "^[a-z-]{1,40}$")) return BadRequest(new { error = "Неизвестная страница." });
+        var seen = admin.ToursSeen.Split(',', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+        if (!seen.Contains("*") && seen.Add(page))
+        {
+            admin.ToursSeen = string.Join(',', seen);
+            await db.SaveChangesAsync();
+        }
         return NoContent();
     }
 
@@ -106,7 +114,7 @@ public class AuthController(AppDbContext db, AdminAuth auth, StoreLinks links) :
 
     AdminDto Dto(AdminUser a) => new(a.Id, a.Name, a.Phone,
         new StoreDto(a.Store.Id, a.Store.Name, a.Store.Slug, links.ShopUrl(a.Store), a.Store.OnboardedAt is not null),
-        a.TourCompletedAt is not null);
+        a.ToursSeen.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList());
 
     ActionResult<Session> Error(string message, string field) => BadRequest(new { error = message, field });
 }

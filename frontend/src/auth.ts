@@ -17,8 +17,8 @@ export interface Admin {
   name: string
   phone: string
   store: AdminStore
-  /** False until the guided tour of the panel has been finished or skipped. */
-  tourDone: boolean
+  /** Panel pages whose guided tour was already shown ("*" = all). */
+  toursSeen: string[]
 }
 
 const KEY = 'plum.admin.token'
@@ -103,11 +103,18 @@ export async function restore(): Promise<boolean> {
   return true
 }
 
-/** The guided tour was finished or skipped — it won't start by itself again. */
-export async function markTourDone() {
-  if (admin.value) admin.value.tourDone = true
+/** Whether a page's guided tour was already shown to this administrator. */
+export const tourSeen = (page: string) => !!admin.value && (admin.value.toursSeen.includes('*') || admin.value.toursSeen.includes(page))
+
+/** A page's tour was finished or skipped — it won't start by itself there again, on any device. */
+export async function markTourSeen(page: string) {
+  if (admin.value && !tourSeen(page)) admin.value.toursSeen = [...admin.value.toursSeen, page]
   if (!adminToken.value) return
-  await fetch('/api/auth/tour', { method: 'POST', headers: { Authorization: `Bearer ${adminToken.value}` } }).catch(() => {})
+  await fetch('/api/auth/tour', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${adminToken.value}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ page }),
+  }).catch(() => {})
 }
 
 export function forget() {

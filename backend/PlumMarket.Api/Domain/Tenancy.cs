@@ -100,8 +100,11 @@ public class AdminUser
     public Store Store { get; set; } = null!;
     public DateTime CreatedAt { get; set; }
     public DateTime LastLoginAt { get; set; }
-    /// <summary>When they finished or skipped the guided tour of the panel; until then it starts on their first visit.</summary>
-    public DateTime? TourCompletedAt { get; set; }
+    /// <summary>
+    /// Panel pages whose short guided tour this administrator has already seen (comma-separated keys such as
+    /// "dashboard,orders"; "*" = all). A page's tour runs by itself only on the first visit; «?» replays it.
+    /// </summary>
+    public string ToursSeen { get; set; } = "";
 }
 
 /// <summary>Admin-panel session. Only a hash of the bearer token is stored.</summary>
