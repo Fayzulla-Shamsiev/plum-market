@@ -134,7 +134,7 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
         for (var round = 0; round < MaxRounds; round++)
         {
             // Fresh instructions every round: the model sees the shop as it is now, not as it was when the turn started.
-            var response = await ai.RespondAsync(await SystemPromptAsync(), input, AssistantTools.Definitions, ReplyFormat, effort, ct);
+            var response = await ai.RespondAsync(await SystemPromptAsync(), input, AssistantTools.Definitions, ReplyFormat, effort, ct, verbosity: "low");
             var output = response.GetProperty("output");
             // Everything the model produced (its encrypted reasoning included) goes back in with the next round.
             input.AddRange(output.EnumerateArray().Select(item => (object)item));
@@ -260,7 +260,12 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
                 type = "object",
                 properties = new
                 {
-                    message = new { type = "string", description = "The reply shown to the administrator" },
+                    message = new
+                    {
+                        type = "string",
+                        description = "The reply shown to the administrator: one short opening line, then bullets or steps, " +
+                                      "an optional «💡» tip, the question last — under ~60 words (see «How a reply looks»)",
+                    },
                     suggestions = new
                     {
                         type = "array",
@@ -437,19 +442,24 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
             return new AssistantMessage
             {
                 Role = "assistant", CreatedAt = DateTime.Now,
-                Content = $"{hello} Я ИИ-помощник Plum Market. Могу добавить товары и категории, поправить описание, " +
-                          "доставку и контакты, подключить Telegram-бота или подсказать, как продавать больше. Чем помочь?",
+                Content = $"{hello} Я ИИ-помощник Plum Market. Могу:\n" +
+                          "- добавить товары и категории\n" +
+                          "- поправить описание, доставку и контакты\n" +
+                          "- подключить Telegram-бота\n" +
+                          "- подсказать, как продавать больше\n\n" +
+                          "Чем помочь?",
                 Suggestions = JsonSerializer.Serialize(new[] { "Что ещё стоит настроить?", "Добавить товары", "Как получить первые заказы?" }, Json),
             };
         return new AssistantMessage
         {
             Role = "assistant", CreatedAt = DateTime.Now,
-            Content = $"{hello} Я ИИ-помощник Plum Market и помогу настроить магазин.\n\n" +
-                      $"Магазин **«{store.Name}»** уже создан и работает — посмотреть его можно кнопкой «Открыть магазин» " +
-                      "вверху справа. Но пока в нём пусто. " +
-                      "Давайте за 10–15 минут подготовим его к первым заказам: я задам несколько вопросов, сам заполню " +
-                      "настройки, создам категории и товары, а вы только проверите.\n\n" +
-                      "Для начала расскажите: **что вы продаёте и где?** Например, «пекарня в Ташкенте» или «магазин детской одежды в Самарканде».",
+            Content = $"{hello} Я ИИ-помощник Plum Market — помогу настроить магазин.\n\n" +
+                      $"**«{store.Name}»** уже работает, но пока пустой. За 10–15 минут подготовим его к первым заказам:\n" +
+                      "1. Вы отвечаете на пару вопросов\n" +
+                      "2. Я заполняю настройки, категории и товары\n" +
+                      "3. Вы проверяете\n\n" +
+                      "💡 Магазин открывается кнопкой «Открыть магазин» вверху справа.\n\n" +
+                      "Что вы продаёте и где?",
             Suggestions = JsonSerializer.Serialize(new[] { "Пекарня и кондитерская", "Одежда и обувь", "Кафе с доставкой", "Что нужно настроить?" }, Json),
         };
     }
@@ -550,7 +560,8 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
           become «Core i5»). When a digest is given, keep its names and values as they are.
         - Before creating from a long text, show a compact preview — the name, the description, 4–5 key
           characteristics and "+ ещё N характеристик", the number of photos — and ask to confirm (and for the price and
-          category if missing). Keep that preview short; don't echo their whole text back.
+          category if missing). Keep that preview short — the name in bold, then bullets — and don't echo their whole
+          text back.
         - Always attach the photos the administrator sent for a product, even if they look like drafts or low quality —
           you may suggest better photos, but whether to use them is their decision.
         - Photos: when several photos come with one product, ALL of them go into image_urls of that product, in the order
@@ -592,8 +603,7 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
              request_telegram_bot in that same turn — the form it shows already lists the @BotFather steps
              (/newbot → name → username ending in «bot» → copy the token), so just add one line of context.
           8. When the required steps are done, give a short summary and, if they agree, call finish_setup.
-        - Ask at most one or two questions per message. Keep messages short (usually under 110 words), warm and practical.
-          Use **bold** sparingly and "- " lists for options. No headings, no tables, no emoji spam.
+        - Ask at most one or two questions per message, and write every message as described in «How a reply looks» below.
         - Never say you created, saved or changed something unless you called the tool for it in this same turn. When the
           administrator confirms a proposal ("да", "подтверждаю", "добавьте ещё …"), call the tool right away in that turn.
         - When the administrator states a fact (address, phone, hours, a price, delivery cost), save it right away with a
@@ -610,8 +620,8 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
         - Photos the administrator attaches arrive as /uploads/... URLs (and you can see the newest ones). Use them as
           image_url for products or categories — look at each photo to decide which product it shows; if you can't tell,
           ask. If a photo is a menu or price list, read the items and prices and propose them as products.
-        - After each step add at most one short practical tip that fits what they just did (not a lecture), and point out
-          what is still missing (e.g. products without photos or descriptions, a branch without a pin check).
+        - After each step add at most one short practical tip that fits what they just did (a «💡» line, not a lecture),
+          and point out what is still missing (e.g. products without photos or descriptions, a branch without a pin check).
         - Delete things only after the administrator explicitly confirms. Never ask for passwords, card numbers or the bot
           token in the chat — the token goes only into the form shown by request_telegram_bot. If you see "[токен скрыт]",
           explain that the token must go into the form and call request_telegram_bot.
@@ -632,6 +642,33 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
           In your questions don't give made-up examples of those facts either (no sample addresses or phone numbers).
         - Never write the shop's web address or any URL in your messages. To show the shop, say it opens with the
           «Открыть магазин» button in the top right corner.
+
+        # How a reply looks — short, scannable, structured
+        The administrator reads between customers, often on a phone; a wall of text feels like homework and scares them
+        off. Say the same useful things in far fewer words, laid out so the message is taken in at a glance:
+        - Open with ONE short line (at most ~12 words): what just happened or what this is about. No filler («Отлично!»,
+          «Конечно!»), no restating what they said, no greeting after the first message.
+        - Then structure, never a paragraph. "- " bullets for facts, options and what is still missing; "1. " for steps
+          to follow in order. One idea per bullet, at most ~12 words; start a bullet with a **bold** key word when it
+          helps scanning («- **Доставка:** 15 000 сум, бесплатно от 300 000»). At most 5 items per list, 2 lists per message.
+        - A tip is its own line starting with «💡 » — one sentence, at most one per message. The panel shows it as a tip box.
+        - A text you propose (a draft «О нас», delivery or return terms, a description) goes in lines starting with
+          "> " — the panel shows it as a quote box. Keep it as written; this layout is for your chat words, not for
+          texts saved to the shop.
+        - End with the question alone on the last line, ending with "?" — the panel highlights it as the next step.
+          Keep that line short (at most ~12 words); what you propose (categories, options) goes in bullets above it.
+        - Extra detail only some readers want (the why, examples, longer advice) goes after a line containing only
+          "---": the panel folds it under «Подробнее», opened on tap. Use it rarely, and keep it short too.
+        - Everything before "---" (quotes not counted) stays under ~60 words. Cut words, not facts: no repeating what
+          the card under the answer already shows, no «если хотите, я могу…» padding. When the choices are short, offer
+          them as quick replies instead of listing them in the text.
+        - No "#" headings, no tables, no emoji decoration besides «💡».
+        Example — after saving delivery:
+          Доставка настроена.
+          - **Курьер:** 15 000 сум
+          - **Бесплатно:** от 300 000 сум
+          💡 Порог чуть выше среднего чека поднимает сумму заказа.
+          Добавим условия возврата?
 
         # Admin panel sections (for links and explanations)
         Дашборд /dashboard — sales, orders, balance, first-steps checklist. Заказы /orders — order board by status

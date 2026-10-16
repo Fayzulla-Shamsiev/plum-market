@@ -203,7 +203,9 @@ watch(busy, on => {
 })
 onBeforeUnmount(() => clearInterval(timer))
 
-// ---- the assistant's text: a small, escaped subset of markdown (bold, lists, links) ----
+// ---- the assistant's text: a small, escaped subset of markdown laid out as blocks the eye can skim ----
+// "- " points, "1. " steps, "> " a quoted draft, "💡 " a tip, the closing question highlighted as the next step,
+// and anything after a "---" line folded under «Подробнее» (see «How a reply looks» in SetupAssistant).
 
 function escape(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -218,33 +220,61 @@ function inline(s: string) {
         : `<a href="${href}" target="_blank" rel="noopener">${label}</a>`)
     .replace(/(^|[\s(«])(https?:\/\/[^\s<)»,]+[^\s<)».,!?:;])/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
 }
-function render(md: string) {
-  const out: string[] = []
-  let list: { tag: 'ul' | 'ol'; items: string[] } | null = null
-  let para: string[] = []
-  const flushPara = () => { if (para.length) out.push(`<p>${para.join('<br>')}</p>`); para = [] }
-  const flushList = () => { if (list) out.push(`<${list.tag}>${list.items.map(i => `<li>${i}</li>`).join('')}</${list.tag}>`); list = null }
+type Block = { kind: 'p' | 'ul' | 'ol' | 'quote' | 'tip' | 'ask'; lines: string[] }
+
+function blocks(md: string): Block[] {
+  const out: Block[] = []
+  let open = false // whether the next line may join the last block
   for (const line of md.split('\n')) {
-    const bullet = /^\s*[-•*]\s+(.*)$/.exec(line)
-    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line)
-    if (bullet || numbered) {
-      flushPara()
-      const tag = bullet ? 'ul' : 'ol'
-      if (list && list.tag !== tag) flushList()
-      list ??= { tag, items: [] }
-      list.items.push(inline((bullet ?? numbered)![1]))
-    } else if (!line.trim()) {
-      flushPara()
-      flushList()
-    } else {
-      flushList()
-      const heading = /^#+\s*(.*)$/.exec(line)
-      para.push(heading ? `<b>${inline(heading[1])}</b>` : inline(line))
+    const last = open ? out[out.length - 1] : undefined
+    let kind: Block['kind'] = 'p'
+    let text = line.replace(/^#+\s*/, '')
+    let m: RegExpExecArray | null
+    if (!line.trim()) { open = false; continue }
+    if ((m = /^\s*(?:>\s*)?💡\s*(.*)$/u.exec(line))) [kind, text] = ['tip', m[1]]
+    else if ((m = /^\s*[-•*]\s+(.*)$/.exec(line))) [kind, text] = ['ul', m[1]]
+    else if ((m = /^\s*\d+[.)]\s+(.*)$/.exec(line))) [kind, text] = ['ol', m[1]]
+    else if ((m = /^\s*>\s?(.*)$/.exec(line))) [kind, text] = ['quote', m[1]]
+    else if ((last?.kind === 'ul' || last?.kind === 'ol') && /^\s{2,}\S/.test(line)) {
+      // An indented line under a point continues that point rather than breaking the list.
+      last.lines[last.lines.length - 1] += `\n${line.trim()}`
+      continue
     }
+    if (last?.kind === kind && kind !== 'tip') last.lines.push(text)
+    else out.push({ kind, lines: [text] })
+    open = true
   }
-  flushPara()
-  flushList()
-  return out.join('')
+  // The closing question is what the administrator has to answer: it stands apart from the rest.
+  const end = out[out.length - 1]
+  const question = end?.kind === 'p' ? end.lines[end.lines.length - 1] : ''
+  if (question.replace(/\*+/g, '').trim().endsWith('?') && (out.length > 1 || end.lines.length > 1)) {
+    end.lines.pop()
+    if (!end.lines.length) out.pop()
+    out.push({ kind: 'ask', lines: [question.replace(/^\*\*(.+)\*\*$/, '$1')] })
+  }
+  return out
+}
+
+function html(list: Block[]) {
+  const lines = (b: Block) => b.lines.map(inline).join('<br>')
+  const items = (b: Block) => b.lines.map(l => `<li>${l.split('\n').map(inline).join('<br>')}</li>`).join('')
+  return list.map(b => {
+    switch (b.kind) {
+      case 'ul': return `<ul class="pts">${items(b)}</ul>`
+      case 'ol': return `<ol class="seq">${items(b)}</ol>`
+      case 'quote': return `<blockquote>${lines(b)}</blockquote>`
+      case 'tip': return `<p class="tip">${lines(b)}</p>`
+      case 'ask': return `<p class="ask">${lines(b)}</p>`
+      default: return `<p>${lines(b)}</p>`
+    }
+  }).join('')
+}
+
+function render(md: string) {
+  const [main, ...rest] = md.split(/^\s*-{3,}\s*$/m)
+  const more = rest.join('\n').trim()
+  return html(blocks(main.trim())) +
+    (more ? `<details class="more"><summary>Подробнее</summary><div class="more-body">${html(blocks(more))}</div></details>` : '')
 }
 function onBubbleClick(e: MouseEvent) {
   const a = (e.target as HTMLElement).closest('a[data-internal]') as HTMLAnchorElement | null
@@ -491,9 +521,30 @@ const lastTelegramCard = computed(() => {
 .msg.assistant .bubble { background: #fff; border: 1px solid var(--line); border-top-left-radius: 6px; box-shadow: 0 1px 2px rgb(21 32 51 / 4%); }
 .msg.user .bubble { background: var(--blue); color: #fff; border-top-right-radius: 6px; white-space: pre-wrap; }
 .bubble :deep(p) { margin: 0; }
-.bubble :deep(p + p), .bubble :deep(p + ul), .bubble :deep(p + ol), .bubble :deep(ul + p), .bubble :deep(ol + p) { margin-top: 8px; }
+.bubble > :deep(* + *), .bubble :deep(.more-body > * + *) { margin-top: 10px; }
 .bubble :deep(ul), .bubble :deep(ol) { margin: 0; padding-left: 20px; display: grid; gap: 3px; }
 .bubble :deep(b) { font-weight: 650; }
+/* points: a small dot instead of the browser bullet */
+.bubble :deep(ul.pts) { list-style: none; padding: 0; gap: 6px; }
+.bubble :deep(ul.pts > li) { position: relative; padding-left: 18px; }
+.bubble :deep(ul.pts > li::before) { content: ''; position: absolute; left: 3px; top: .62em; width: 6px; height: 6px; border-radius: 50%; background: var(--blue); opacity: .55; }
+/* steps: numbered circles */
+.bubble :deep(ol.seq) { list-style: none; padding: 0; gap: 8px; counter-reset: seq; }
+.bubble :deep(ol.seq > li) { position: relative; padding-left: 32px; min-height: 22px; counter-increment: seq; }
+.bubble :deep(ol.seq > li::before) { content: counter(seq); position: absolute; left: 0; top: 1px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--blue-50); color: var(--blue); font-size: 12.5px; font-weight: 700; }
+/* a draft text the assistant proposes */
+.bubble :deep(blockquote) { margin: 0; padding: 9px 12px; border-left: 3px solid var(--blue-100); border-radius: 4px 10px 10px 4px; background: #f6f8fc; color: var(--ink-2); font-size: 14.5px; }
+/* one practical tip */
+.bubble :deep(.tip) { display: flex; gap: 8px; padding: 8px 12px; border-radius: 10px; background: #fff8e8; color: #6b4d0a; font-size: 14px; }
+.bubble :deep(.tip::before) { content: '💡'; flex: none; }
+/* the question to answer next */
+.bubble :deep(.ask) { padding: 9px 12px; border-radius: 10px; background: var(--blue-50); font-weight: 600; }
+.bubble :deep(.more) { border-top: 1px dashed var(--line); padding-top: 8px; }
+.bubble :deep(.more summary) { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; color: var(--blue); font-size: 13.5px; font-weight: 600; user-select: none; }
+.bubble :deep(.more summary::-webkit-details-marker) { display: none; }
+.bubble :deep(.more summary::after) { content: ''; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1.8px 1.8px 0; transform: translateY(-2px) rotate(45deg); transition: transform .15s; }
+.bubble :deep(.more[open] summary::after) { transform: translateY(1px) rotate(-135deg); }
+.bubble :deep(.more-body) { margin-top: 8px; color: var(--ink-2); font-size: 14.5px; }
 .bubble :deep(a) { color: var(--blue); font-weight: 550; }
 .bubble :deep(a:hover) { text-decoration: underline; }
 .bubble.folded { max-height: 9.5em; overflow: hidden; -webkit-mask-image: linear-gradient(180deg, #000 60%, transparent); mask-image: linear-gradient(180deg, #000 60%, transparent); }

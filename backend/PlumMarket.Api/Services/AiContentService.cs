@@ -354,11 +354,11 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
     /// instead. The key is attached here and nowhere else, and never logged.
     /// </summary>
     public async Task<JsonElement> RespondAsync(string instructions, IEnumerable<object> input, IEnumerable<object>? tools,
-        object? textFormat, string effort, CancellationToken ct)
+        object? textFormat, string effort, CancellationToken ct, string? verbosity = null)
     {
         if (ApiKey is not { } key) throw new InvalidOperationException("ключ OpenAI не настроен");
         var model = AssistantModel;
-        var body = await SendResponseAsync(key, model, instructions, input, tools, textFormat, effort, ct);
+        var body = await SendResponseAsync(key, model, instructions, input, tools, textFormat, effort, verbosity, ct);
 
         // A rate limit is usually gone within a second: wait the moment OpenAI asks for, then try the smaller model
         // rather than leave the administrator with an error in the middle of the setup.
@@ -367,12 +367,12 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
             if (RetryAfter(body.Text) is { } wait && wait <= TimeSpan.FromSeconds(6))
             {
                 await Task.Delay(wait + TimeSpan.FromMilliseconds(250), ct);
-                body = await SendResponseAsync(key, model, instructions, input, tools, textFormat, effort, ct);
+                body = await SendResponseAsync(key, model, instructions, input, tools, textFormat, effort, verbosity, ct);
             }
             if (body.Status == System.Net.HttpStatusCode.TooManyRequests && FallbackModel != model)
             {
                 log.LogInformation("OpenAI rate limit on {Model}, falling back to {Fallback}", model, FallbackModel);
-                body = await SendResponseAsync(key, FallbackModel, instructions, input, tools, textFormat, effort, ct);
+                body = await SendResponseAsync(key, FallbackModel, instructions, input, tools, textFormat, effort, verbosity, ct);
             }
         }
 
@@ -388,7 +388,7 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
     }
 
     async Task<(System.Net.HttpStatusCode Status, string Text)> SendResponseAsync(string key, string model, string instructions,
-        IEnumerable<object> input, IEnumerable<object>? tools, object? textFormat, string effort, CancellationToken ct)
+        IEnumerable<object> input, IEnumerable<object>? tools, object? textFormat, string effort, string? verbosity, CancellationToken ct)
     {
         var payload = new Dictionary<string, object>
         {
@@ -409,7 +409,11 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
             // Strict tool schemas and parallel calls don't mix; one call per round, arrays inside a call instead.
             payload["parallel_tool_calls"] = false;
         }
-        if (textFormat is not null) payload["text"] = new { format = textFormat };
+        // Verbosity is a reasoning-model setting too: "low" keeps chat answers short without touching their content.
+        if (textFormat is not null)
+            payload["text"] = verbosity is not null && !model.StartsWith("gpt-4", StringComparison.Ordinal)
+                ? new { format = textFormat, verbosity }
+                : new { format = textFormat };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
         {
