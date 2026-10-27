@@ -15,7 +15,10 @@ namespace PlumMarket.Api.Services;
 /// availability — the products just created, with a checkbox and a quantity box per branch.
 /// categories — the categories just created, each with a photo slot.
 public record AssistantCard(string Kind, string Title, List<string>? Lines = null, string? Link = null, string? LinkLabel = null,
-    List<int>? ProductIds = null, List<int>? CategoryIds = null, List<PhotoChoice>? PhotoSets = null);
+    List<int>? ProductIds = null, List<int>? CategoryIds = null, List<PhotoChoice>? PhotoSets = null, PriceCheck? Price = null);
+
+/// <summary>Card «price»: offers found on the web and the suggested price, for the administrator to confirm or change.</summary>
+public record PriceCheck(string Query, int? ProductId, string? ProductName, List<PriceOffer> Offers, long? Suggested, string Summary);
 
 /// <summary>
 /// Stock photos offered for one product or category (card «photos»). The administrator picks one; the pick is
@@ -31,7 +34,7 @@ public record ToolOutcome(string Result, AssistantCard? Card = null);
 /// admin page does, with the same validation, so a store set up by chat is indistinguishable from one set up by
 /// hand. Runs inside an admin request: the store filter already limits every query to this store.
 /// </summary>
-public partial class AssistantTools(AppDbContext db, StoreContext tenant, StockPhotos stock)
+public partial class AssistantTools(AppDbContext db, StoreContext tenant, StockPhotos stock, AiContentService ai)
 {
     /// <summary>Panel sections the assistant can send the administrator to.</summary>
     public static readonly Dictionary<string, (string Path, string Label)> Sections = new()
@@ -276,6 +279,17 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant, StockP
                 ["section"] = new Dictionary<string, object> { ["type"] = "string", ["enum"] = Sections.Keys.ToArray() },
                 ["label"] = Str("Button text in the administrator's language, e.g. 'Открыть карту филиала'"),
             }),
+        Fn("check_market_price",
+            "Search the web for what a product costs in shops in Uzbekistan now (takes 10–30 s). Shows the offers found " +
+            "and a suggested price in a card, where the administrator confirms or changes it; their choice then arrives " +
+            "as a chat message. Use when they ask what something costs, ask to check prices online, or don't know what " +
+            "price to set for a common product. Not for their own handmade goods (cakes, bouquets they make).",
+            new()
+            {
+                ["query"] = Str("The product as people search for it, with model and variant: «iPhone 14 256GB», " +
+                                "«Samsung Galaxy A55 8/256», «Nutella 750 г»"),
+                ["product_id"] = NInt("The existing product this price is for, if any"),
+            }),
         Fn("finish_setup",
             "Mark the first-run setup as finished, once the shop can take orders and the administrator agrees. " +
             "Shows buttons to the admin panel and the shop.",
@@ -360,6 +374,7 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant, StockP
                 "accept_step" => await AcceptStep(a),
                 "open_section" => OpenSection(a),
                 "find_stock_photos" => await FindStockPhotos(a),
+                "check_market_price" => await CheckMarketPrice(a),
                 "finish_setup" => await Finish(),
                 _ => new ToolOutcome($"Ошибка: неизвестный инструмент {name}"),
             };
@@ -855,6 +870,35 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant, StockP
         if (!Sections.TryGetValue(key, out var section)) return new ToolOutcome("Ошибка: неизвестный раздел");
         return new ToolOutcome($"Показана кнопка «{S(a, "label")}» → {section.Label}.",
             new AssistantCard("link", S(a, "label") ?? section.Label, null, section.Path, section.Label));
+    }
+
+    async Task<ToolOutcome> CheckMarketPrice(JsonElement a)
+    {
+        var query = S(a, "query") ?? throw new ToolError("не указано, что искать");
+        if (query.Length > 120) query = query[..120];
+        int? productId = L(a, "product_id") is { } pid ? (int)pid : null;
+        string? productName = null;
+        if (productId is { } id)
+            productName = (await db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id))?.Name.Get()
+                          ?? throw new ToolError($"товар id={id} не найден");
+
+        MarketPrices found;
+        try { found = await ai.MarketPricesAsync(query, CancellationToken.None); }
+        catch (Exception e) when (e is InvalidOperationException or HttpRequestException or TaskCanceledException or JsonException or KeyNotFoundException)
+        {
+            throw new ToolError("поиск цен не удался — " + e.Message);
+        }
+        if (found.Offers.Count == 0 || found.Suggested is not { } suggested)
+            return new ToolOutcome($"Надёжных цен на «{query}» в интернете не найдено. {found.Summary} Скажи это в одной " +
+                                   "строке и спроси цену у администратора.");
+
+        var offers = string.Join("; ", found.Offers.Select(o => $"{o.Store} — {Money(o.Price)}{(o.Condition == "used" ? " (б/у)" : "")}"));
+        return new ToolOutcome(
+            $"Найдено: {offers}. Предлагаемая цена (медиана новых): {Money(suggested)}. {found.Summary} Карточка с ценами " +
+            "показана: администратор подтверждает или меняет цену там, и его выбор придёт сообщением. Пока его нет — " +
+            "не сохраняй цену; в ответе коротко назови диапазон и предложенную цену.",
+            new AssistantCard("price", $"Цены на «{query}»",
+                Price: new PriceCheck(query, productId, productName, found.Offers, suggested, found.Summary)));
     }
 
     const int PhotosPerItem = 8;

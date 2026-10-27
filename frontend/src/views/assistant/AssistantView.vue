@@ -7,6 +7,7 @@ import Icon from '../../components/Icon.vue'
 import { refreshLookups } from '../../store'
 import AvailabilityCard from './AvailabilityCard.vue'
 import CategoriesCard from './CategoriesCard.vue'
+import PriceCard from './PriceCard.vue'
 import StockPhotosCard from './StockPhotosCard.vue'
 import TelegramConnectCard from './TelegramConnectCard.vue'
 
@@ -177,6 +178,12 @@ function botConnected(username: string) {
 function photosSaved(names: string[]) {
   const list = names.map(n => `«${n}»`).join(', ')
   send(names.length === 1 ? `Сохранил фото для ${list}.` : `Сохранил фото для: ${list}.`)
+}
+
+/** A price confirmed in a «price» card goes to the assistant as the administrator's words, so it can save it. */
+function priceChosen(amount: number, product: string | null) {
+  const sum = String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  send(product ? `Ставим цену ${sum} сум для «${product}».` : `Ставим цену ${sum} сум.`)
 }
 
 // ---- leaving ----
@@ -376,6 +383,10 @@ const lastTelegramCard = computed(() => {
                   </div>
                   <div v-else-if="c.kind === 'photos' && c.photoSets?.length" class="card">
                     <StockPhotosCard :title="c.title" :sets="c.photoSets" :locked="busy" @saved="photosSaved" />
+                  </div>
+                  <div v-else-if="c.kind === 'price' && c.price?.offers.length" class="card">
+                    <PriceCard :title="c.title" :price="c.price" :active="m.id === last?.id" :locked="busy"
+                      @chosen="v => priceChosen(v, c.price!.productName)" />
                   </div>
                   <RouterLink v-else-if="c.kind === 'link' && c.link" :to="c.link" class="card link">
                     <span>{{ c.title }}</span>

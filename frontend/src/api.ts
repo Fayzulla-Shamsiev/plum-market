@@ -224,7 +224,8 @@ export interface AssistantCard {
   /** change — something was saved; link — a button to a panel section; telegram — the bot token form; finish — setup done. */
   /** availability — products just created, with branch checkboxes and quantity boxes. */
   /** photos — stock photos from Pixabay to pick one from, per product or category. */
-  kind: 'change' | 'link' | 'telegram' | 'finish' | 'availability' | 'categories' | 'photos'
+  /** price — offers found on the web and a suggested price, confirmed or changed by the administrator. */
+  kind: 'change' | 'link' | 'telegram' | 'finish' | 'availability' | 'categories' | 'photos' | 'price'
   title: string
   lines: string[] | null
   link: string | null
@@ -232,6 +233,16 @@ export interface AssistantCard {
   productIds: number[] | null
   categoryIds: number[] | null
   photoSets?: PhotoChoice[] | null
+  price?: PriceCheck | null
+}
+
+export interface PriceCheck {
+  query: string
+  productId: number | null
+  productName: string | null
+  offers: { store: string; price: number; condition: 'new' | 'used' | 'unknown'; url: string; title: string }[]
+  suggested: number | null
+  summary: string
 }
 
 /** Stock photos offered for one product or category; chosenId/chosenUrl once the administrator picked one. */

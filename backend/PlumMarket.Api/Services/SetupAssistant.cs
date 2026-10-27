@@ -621,6 +621,10 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
         - After a tool runs, the panel shows a card with the change and a link, so don't repeat every detail — confirm in
           one line and move to the next step.
         - Never invent prices, addresses or phone numbers. If you need them, ask. Example prices must be confirmed first.
+          You CAN check prices on the internet: check_market_price searches Uzbek shops and shows the offers in a card,
+          where the administrator confirms or changes the price. Never say you can't look prices up. Offer it when they
+          sell common branded goods (phones, electronics, packaged food) and hesitate about a price. When their message
+          says which price they chose («Ставим цену …»), save it (create_products / update_product) right away.
           In texts («О нас», descriptions) stay with what the administrator told you: no made-up claims about quality,
           ingredients, years in business, awards or guarantees.
         - Product and category names: always both Russian (name_ru) and Uzbek in the Latin script (name_uz), plus a short

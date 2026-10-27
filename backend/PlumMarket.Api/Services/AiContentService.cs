@@ -5,6 +5,9 @@ using PlumMarket.Api.Domain;
 
 namespace PlumMarket.Api.Services;
 
+public record PriceOffer(string Store, long Price, string Condition, string Url, string Title);
+public record MarketPrices(string Query, List<PriceOffer> Offers, long? Suggested, string Summary);
+
 public record AiResult(Dictionary<string, Dictionary<string, string>> Values, string Provider, string? Note = null);
 
 /// <summary>
@@ -414,7 +417,11 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
             payload["text"] = verbosity is not null && !model.StartsWith("gpt-4", StringComparison.Ordinal)
                 ? new { format = textFormat, verbosity }
                 : new { format = textFormat };
+        return await PostResponseAsync(key, payload, ct);
+    }
 
+    async Task<(System.Net.HttpStatusCode Status, string Text)> PostResponseAsync(string key, Dictionary<string, object> payload, CancellationToken ct)
+    {
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
         {
             Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
@@ -425,6 +432,136 @@ public class AiContentService(IConfiguration config, IHttpClientFactory factory,
         using var response = await client.SendAsync(request, ct);
         return (response.StatusCode, await response.Content.ReadAsStringAsync(ct));
     }
+
+    // ------------------------------------------------------------------ market prices (web search)
+
+    /// <summary>
+    /// What a product costs in shops in Uzbekistan right now, from OpenAI's built-in web search — for the setup
+    /// assistant's «check_market_price». Only offers whose page the search actually visited are kept (the model may
+    /// not invent a shop or a link), and the suggested price is the median of the new-item offers, computed here.
+    /// The result is a hint: the administrator confirms or changes the price before anything is saved.
+    /// </summary>
+    public async Task<MarketPrices> MarketPricesAsync(string product, CancellationToken ct)
+    {
+        if (ApiKey is not { } key) throw new InvalidOperationException("ключ OpenAI не настроен");
+        var payload = new Dictionary<string, object>
+        {
+            ["model"] = AssistantModel,
+            ["instructions"] = PriceInstructions,
+            ["input"] = new[] { new { role = "user", content = $"Product: {product}" } },
+            ["store"] = false,
+            ["tools"] = new object[]
+            {
+                new { type = "web_search", user_location = new { type = "approximate", country = "UZ", city = "Tashkent", timezone = "Asia/Tashkent" } },
+            },
+            ["tool_choice"] = "required",
+            ["reasoning"] = new { effort = "low" },
+            ["include"] = new[] { "web_search_call.action.sources" },
+            ["text"] = new { format = PriceFormat },
+        };
+        var body = await PostResponseAsync(key, payload, ct);
+        if (body.Status != System.Net.HttpStatusCode.OK)
+        {
+            log.LogWarning("OpenAI price check {Status}: {Body}", (int)body.Status, Trim(body.Text));
+            throw new InvalidOperationException(Explain(body.Status, body.Text));
+        }
+        using var doc = JsonDocument.Parse(body.Text);
+        var root = doc.RootElement;
+
+        // Pages the search really opened or cited: an offer must come from one of them.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in root.GetProperty("output").EnumerateArray())
+        {
+            if (item.TryGetProperty("action", out var action) && action.ValueKind == JsonValueKind.Object
+                && action.TryGetProperty("sources", out var sources) && sources.ValueKind == JsonValueKind.Array)
+                foreach (var src in sources.EnumerateArray())
+                    if (src.TryGetProperty("url", out var u) && Host(u.GetString()) is { } h) seen.Add(h);
+            if (item.TryGetProperty("content", out var parts) && parts.ValueKind == JsonValueKind.Array)
+                foreach (var part in parts.EnumerateArray())
+                    if (part.TryGetProperty("annotations", out var notes) && notes.ValueKind == JsonValueKind.Array)
+                        foreach (var note in notes.EnumerateArray())
+                            if (note.TryGetProperty("url", out var u) && Host(u.GetString()) is { } h) seen.Add(h);
+        }
+
+        using var answer = JsonDocument.Parse(OutputText(root) is { Length: > 0 } t ? t : "{}");
+        var offers = new List<PriceOffer>();
+        var dropped = new List<string>();
+        if (answer.RootElement.TryGetProperty("offers", out var list) && list.ValueKind == JsonValueKind.Array)
+            foreach (var o in list.EnumerateArray())
+            {
+                var url = o.GetProperty("url").GetString() ?? "";
+                var price = o.GetProperty("price").GetInt64();
+                if (Host(url) is not { } host || price is < 1_000 or > 100_000_000_000) continue;
+                if (seen.Count > 0 && !seen.Contains(host)) { dropped.Add(host); continue; }
+                offers.Add(new PriceOffer(Cut(o.GetProperty("store").GetString(), 60), price,
+                    o.GetProperty("condition").GetString() is "used" ? "used" : o.GetProperty("condition").GetString() is "new" ? "new" : "unknown",
+                    url, Cut(o.GetProperty("title").GetString(), 120)));
+            }
+        // A marketplace full of private listings must not crowd the shops out: at most two offers per site.
+        offers = offers.DistinctBy(o => o.Url).OrderBy(o => o.Condition == "used").ThenBy(o => o.Price)
+            .GroupBy(o => Host(o.Url)).SelectMany(g => g.Take(2))
+            .OrderBy(o => o.Condition == "used").ThenBy(o => o.Price).Take(6).ToList();
+        log.LogInformation("Price check «{Product}»: {Offers} offers kept, {Sources} sources seen ({Seen}), dropped: {Dropped}",
+            product, offers.Count, seen.Count, string.Join(", ", seen), string.Join(", ", dropped));
+
+        var basis = offers.Where(o => o.Condition != "used").Select(o => o.Price).Order().ToList();
+        if (basis.Count == 0) basis = offers.Select(o => o.Price).Order().ToList();
+        long? suggested = basis.Count == 0 ? null
+            : (long)Math.Round((basis.Count % 2 == 1 ? basis[basis.Count / 2] : (basis[basis.Count / 2 - 1] + basis[basis.Count / 2]) / 2) / 1000.0) * 1000;
+        var summary = answer.RootElement.TryGetProperty("summary", out var sum) ? Cut(sum.GetString(), 300) : "";
+        return new MarketPrices(product, offers, suggested, summary);
+
+        static string? Host(string? url) =>
+            Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme is "https" or "http" ? u.Host.ToLowerInvariant().Replace("www.", "") : null;
+        static string Cut(string? v, int max) => (v ?? "").Trim() is var t && t.Length > max ? t[..max] : (v ?? "").Trim();
+    }
+
+    const string PriceInstructions = """
+        You check what a product costs in shops in Uzbekistan right now, for a small shop owner who wants to set their
+        own price. Search the web (prefer Uzbek shops and marketplaces: uzum.uz, texnomart.uz, mediapark.uz,
+        asaxiy.uz, olx.uz, alifshop.uz, idea.uz, goodzone.uz, and the like), open the product pages and report real offers.
+        - Only offers you actually saw on a page you visited, with that page's URL. Never guess a price or a URL.
+        - Prices in Uzbek сум as whole numbers (9 299 000 сум → 9299000). Skip offers priced only in dollars or with
+          monthly installment amounts only; never convert currencies.
+        - The same product and variant as asked (model, memory, size). Say "used" for б/у / second-hand listings.
+        - 3 to 6 offers is ideal; fewer is fine; none if you found nothing reliable.
+        - summary: one short sentence in Russian about the price range and how fresh/reliable it looks.
+        """;
+
+    static readonly object PriceFormat = new
+    {
+        type = "json_schema",
+        name = "market_prices",
+        strict = true,
+        schema = new
+        {
+            type = "object",
+            properties = new
+            {
+                offers = new
+                {
+                    type = "array",
+                    items = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            store = new { type = "string", description = "Shop or marketplace name" },
+                            title = new { type = "string", description = "The product's name on that page" },
+                            price = new { type = "integer", description = "Price in сум" },
+                            condition = new { type = "string", @enum = new[] { "new", "used", "unknown" } },
+                            url = new { type = "string", description = "The page the price was seen on" },
+                        },
+                        required = new[] { "store", "title", "price", "condition", "url" },
+                        additionalProperties = false,
+                    },
+                },
+                summary = new { type = "string" },
+            },
+            required = new[] { "offers", "summary" },
+            additionalProperties = false,
+        },
+    };
 
     /// <summary>The text of a response's message items (what a Chat Completions reply called "content").</summary>
     public static string OutputText(JsonElement response)
