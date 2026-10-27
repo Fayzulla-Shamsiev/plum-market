@@ -7,6 +7,7 @@ import Icon from '../../components/Icon.vue'
 import { refreshLookups } from '../../store'
 import AvailabilityCard from './AvailabilityCard.vue'
 import CategoriesCard from './CategoriesCard.vue'
+import StockPhotosCard from './StockPhotosCard.vue'
 import TelegramConnectCard from './TelegramConnectCard.vue'
 
 // ИИ-помощник. A new administrator lands here after registration instead of an empty panel: the assistant asks
@@ -170,6 +171,12 @@ function askAbout(step: SetupStep) {
 function botConnected(username: string) {
   botUsername.value = username
   send(`Я подключил Telegram-бота @${username}.`)
+}
+
+/** Stock photos saved from the card: the assistant hears it, so the setup moves on without typing. */
+function photosSaved(names: string[]) {
+  const list = names.map(n => `«${n}»`).join(', ')
+  send(names.length === 1 ? `Сохранил фото для ${list}.` : `Сохранил фото для: ${list}.`)
 }
 
 // ---- leaving ----
@@ -366,6 +373,9 @@ const lastTelegramCard = computed(() => {
                   </div>
                   <div v-else-if="c.kind === 'categories' && c.categoryIds?.length" class="card change">
                     <CategoriesCard :title="c.title" :category-ids="c.categoryIds" :link="c.link" :link-label="c.linkLabel" />
+                  </div>
+                  <div v-else-if="c.kind === 'photos' && c.photoSets?.length" class="card">
+                    <StockPhotosCard :title="c.title" :sets="c.photoSets" :locked="busy" @saved="photosSaved" />
                   </div>
                   <RouterLink v-else-if="c.kind === 'link' && c.link" :to="c.link" class="card link">
                     <span>{{ c.title }}</span>

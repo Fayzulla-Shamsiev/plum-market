@@ -134,7 +134,7 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
         for (var round = 0; round < MaxRounds; round++)
         {
             // Fresh instructions every round: the model sees the shop as it is now, not as it was when the turn started.
-            var response = await ai.RespondAsync(await SystemPromptAsync(), input, AssistantTools.Definitions, ReplyFormat, effort, ct, verbosity: "low");
+            var response = await ai.RespondAsync(await SystemPromptAsync(), input, tools.Available, ReplyFormat, effort, ct, verbosity: "low");
             var output = response.GetProperty("output");
             // Everything the model produced (its encrypted reasoning included) goes back in with the next round.
             input.AddRange(output.EnumerateArray().Select(item => (object)item));
@@ -504,7 +504,15 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
         var sb = new StringBuilder();
         sb.AppendLine(Instructions);
         sb.AppendLine();
+        if (tools.StockPhotosEnabled)
+        {
+            sb.AppendLine(StockPhotoInstructions);
+            sb.AppendLine();
+        }
         sb.AppendLine("# The administrator's shop right now");
+        // Photos and stock are also changed in the cards, without a chat message: this list is the truth.
+        sb.AppendLine("This is the live state. When it differs from earlier messages (yours included), it wins — photos, " +
+                      "stock and branches are also changed in the cards under your answers.");
         sb.AppendLine(await SnapshotAsync());
         return sb.ToString();
     }
@@ -682,6 +690,21 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
         # Uzbek rule
         """ + AiContentService.UzbekRule;
 
+    const string StockPhotoInstructions = """
+        # Stock photos (find_stock_photos)
+        A third way to get photos, besides uploading their own: free stock photos from Pixabay, picked by the
+        administrator in a card. Use it when they ask to find photos on the internet, or when they have no photos —
+        then offer it as an option («Могу подобрать бесплатные фото»), don't search unasked.
+        - Best for categories and generic goods (flowers, bread, coffee, fruit). For a specific item — their own
+          bouquet, a cake they bake, a laptop model — say in one line that their own photo is better, because customers
+          expect to get what they see; search anyway if they still want it.
+        - One call can cover several items (up to 8). The query is in English and plain: what is in the picture.
+        - After the call say in one line: pick a photo for each item and press «Сохранить фото» (or skip). Never claim a
+          stock photo is set — the administrator chooses it. When their message says photos were saved («Сохранил фото
+          для …»), that is done: don't ask about those photos again, move straight to the next step.
+        - Pixabay can't search for a brand or the shop itself; for those, ask for their own photo.
+        """;
+
     async Task<string> SnapshotAsync()
     {
         var store = tenant.Store!;
@@ -705,7 +728,7 @@ public partial class SetupAssistant(AppDbContext db, StoreContext tenant, AiCont
             .Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count);
         sb.AppendLine(categories.Count == 0 ? "Categories: none yet" : $"Categories ({categories.Count}):");
         foreach (var c in categories.Take(60))
-            sb.AppendLine($"- id={c.Id} {c.Name.Get()} / {c.Name.GetValueOrDefault("uz") ?? "—"}{(c.ParentId is { } p ? $" (in id={p})" : "")}, products: {counts.GetValueOrDefault(c.Id)}");
+            sb.AppendLine($"- id={c.Id} {c.Name.Get()} / {c.Name.GetValueOrDefault("uz") ?? "—"}{(c.ParentId is { } p ? $" (in id={p})" : "")}, products: {counts.GetValueOrDefault(c.Id)}, photo: {(c.ImageUrl is null ? "none" : "yes")}");
 
         var products = await db.Products.AsNoTracking().OrderBy(p => p.SortOrder).Take(80)
             .Select(p => new

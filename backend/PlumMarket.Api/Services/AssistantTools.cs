@@ -15,7 +15,13 @@ namespace PlumMarket.Api.Services;
 /// availability — the products just created, with a checkbox and a quantity box per branch.
 /// categories — the categories just created, each with a photo slot.
 public record AssistantCard(string Kind, string Title, List<string>? Lines = null, string? Link = null, string? LinkLabel = null,
-    List<int>? ProductIds = null, List<int>? CategoryIds = null);
+    List<int>? ProductIds = null, List<int>? CategoryIds = null, List<PhotoChoice>? PhotoSets = null);
+
+/// <summary>
+/// Stock photos offered for one product or category (card «photos»). The administrator picks one; the pick is
+/// remembered here, so the card still shows it after a reload.
+/// </summary>
+public record PhotoChoice(string Kind, int Id, string Name, List<StockPhoto> Photos, long? ChosenId = null, string? ChosenUrl = null);
 
 /// <summary>A tool's answer for the model, plus the card for the administrator.</summary>
 public record ToolOutcome(string Result, AssistantCard? Card = null);
@@ -25,7 +31,7 @@ public record ToolOutcome(string Result, AssistantCard? Card = null);
 /// admin page does, with the same validation, so a store set up by chat is indistinguishable from one set up by
 /// hand. Runs inside an admin request: the store filter already limits every query to this store.
 /// </summary>
-public partial class AssistantTools(AppDbContext db, StoreContext tenant)
+public partial class AssistantTools(AppDbContext db, StoreContext tenant, StockPhotos stock)
 {
     /// <summary>Panel sections the assistant can send the administrator to.</summary>
     public static readonly Dictionary<string, (string Path, string Label)> Sections = new()
@@ -276,6 +282,27 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
             new()),
     ];
 
+    /// <summary>Offered only when a Pixabay key is configured.</summary>
+    static readonly object StockPhotoTool =
+        Fn("find_stock_photos",
+            "Show the administrator free stock photos from Pixabay to choose from, for products or categories that " +
+            "have no photo of their own. They pick one per item in the card; the server then sets it. You never set " +
+            "these photos yourself.",
+            new()
+            {
+                ["items"] = Arr(Obj(new()
+                {
+                    ["kind"] = new Dictionary<string, object> { ["type"] = "string", ["enum"] = new[] { "product", "category" } },
+                    ["id"] = Int("Product or category id"),
+                    ["query"] = Str("What the photo should show, in ENGLISH, 1–4 plain words: «red roses bouquet», " +
+                                    "«croissant», «coffee cup». No brand names, no shop name"),
+                })),
+            });
+
+    /// <summary>The tools this store's assistant may use right now.</summary>
+    public IEnumerable<object> Available => stock.Enabled ? [.. Definitions, StockPhotoTool] : Definitions;
+    public bool StockPhotosEnabled => stock.Enabled;
+
     /// <summary>A function tool in the Responses API's (flat) format.</summary>
     static object Fn(string name, string description, Dictionary<string, object> properties) => new
     {
@@ -332,6 +359,7 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
                 "request_telegram_bot" => RequestBot(),
                 "accept_step" => await AcceptStep(a),
                 "open_section" => OpenSection(a),
+                "find_stock_photos" => await FindStockPhotos(a),
                 "finish_setup" => await Finish(),
                 _ => new ToolOutcome($"Ошибка: неизвестный инструмент {name}"),
             };
@@ -827,6 +855,43 @@ public partial class AssistantTools(AppDbContext db, StoreContext tenant)
         if (!Sections.TryGetValue(key, out var section)) return new ToolOutcome("Ошибка: неизвестный раздел");
         return new ToolOutcome($"Показана кнопка «{S(a, "label")}» → {section.Label}.",
             new AssistantCard("link", S(a, "label") ?? section.Label, null, section.Path, section.Label));
+    }
+
+    const int PhotosPerItem = 8;
+
+    async Task<ToolOutcome> FindStockPhotos(JsonElement a)
+    {
+        if (!stock.Enabled) throw new ToolError("поиск фото не настроен на сервере");
+        var sets = new List<PhotoChoice>();
+        var report = new List<string>();
+        foreach (var item in Items(a, "items").Take(8))
+        {
+            var kind = S(item, "kind") == "category" ? "category" : "product";
+            var id = (int)(L(item, "id") ?? 0);
+            var query = S(item, "query") ?? "";
+            var name = kind == "category"
+                ? (await db.Categories.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id))?.Name.Get()
+                : (await db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id))?.Name.Get();
+            if (name is null) { report.Add($"{kind} id={id}: не найден"); continue; }
+            if (query.Length == 0) { report.Add($"«{name}»: пустой запрос"); continue; }
+            List<StockPhoto> photos;
+            try { photos = await stock.SearchAsync(query, PhotosPerItem); }
+            catch (Exception e) when (e is InvalidOperationException or HttpRequestException or TaskCanceledException)
+            {
+                // One failed search must not lose the photos already found for the others.
+                report.Add($"«{name}»: поиск не удался ({e.Message})");
+                continue;
+            }
+            if (photos.Count == 0) { report.Add($"«{name}»: по «{query}» ничего не найдено — попробуй проще, по-английски"); continue; }
+            sets.Add(new PhotoChoice(kind, id, name, photos));
+            report.Add($"«{name}»: показано {photos.Count} фото");
+        }
+        if (sets.Count == 0) return new ToolOutcome("Фото не показаны. " + string.Join("; ", report));
+        return new ToolOutcome(
+            "Карточка с фото с Pixabay показана: " + string.Join("; ", report) + ". Администратор сам выбирает по " +
+            "одному фото для каждого и жмёт «Сохранить фото» — тогда в чат придёт сообщение, какие фото сохранены. " +
+            "Не ставь их через image_url и не говори, что фото уже установлены.",
+            new AssistantCard("photos", sets.Count == 1 ? $"Фото для «{sets[0].Name}»" : "Фото для каталога", PhotoSets: sets));
     }
 
     async Task<ToolOutcome> Finish()

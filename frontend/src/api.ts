@@ -223,13 +223,25 @@ export interface Platforms {
 export interface AssistantCard {
   /** change — something was saved; link — a button to a panel section; telegram — the bot token form; finish — setup done. */
   /** availability — products just created, with branch checkboxes and quantity boxes. */
-  kind: 'change' | 'link' | 'telegram' | 'finish' | 'availability' | 'categories'
+  /** photos — stock photos from Pixabay to pick one from, per product or category. */
+  kind: 'change' | 'link' | 'telegram' | 'finish' | 'availability' | 'categories' | 'photos'
   title: string
   lines: string[] | null
   link: string | null
   linkLabel: string | null
   productIds: number[] | null
   categoryIds: number[] | null
+  photoSets?: PhotoChoice[] | null
+}
+
+/** Stock photos offered for one product or category; chosenId/chosenUrl once the administrator picked one. */
+export interface PhotoChoice {
+  kind: 'product' | 'category'
+  id: number
+  name: string
+  photos: { id: number; thumb: string; author: string }[]
+  chosenId: number | null
+  chosenUrl: string | null
 }
 
 /** Where each product is sold and how many are left there (the table under «Добавлено товаров»). */
@@ -287,6 +299,8 @@ export const api = {
   availability: (ids: number[]) => request<Availability>(`/api/assistant/availability${qs({ ids: ids.join(',') })}`),
   assistantCategories: (ids: number[]) =>
     request<{ id: number; name: string; imageUrl: string | null; products: number }[]>(`/api/assistant/categories${qs({ ids: ids.join(',') })}`),
+  pickStockPhoto: (kind: 'product' | 'category', id: number, photoId: number) =>
+    request<{ url: string }>('/api/assistant/stock-photo', { method: 'POST', body: JSON.stringify({ kind, id, photoId }) }),
   setPhoto: (kind: 'product' | 'category', id: number, url: string | null) =>
     request<{ url: string | null }>('/api/assistant/photo', { method: 'PUT', body: JSON.stringify({ kind, id, url }) }),
   saveAvailability: (items: AvailabilityInput) =>

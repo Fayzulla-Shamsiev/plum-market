@@ -36,6 +36,14 @@ builder.Services.AddScoped<CheckoutService>();
 builder.Services.AddHttpClient(nameof(AiContentService), c => c.Timeout = TimeSpan.FromSeconds(180));
 builder.Services.AddSingleton<AiContentService>();
 // The first-run assistant: a conversation that sets the new shop up through the same rules as the admin pages.
+builder.Services.AddMemoryCache();
+// Pixabay throttles anonymous clients much harder than ones that say who they are.
+builder.Services.AddHttpClient(nameof(StockPhotos), c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("PlumMarket/1.0 (+https://plum-market.onrender.com)");
+});
+builder.Services.AddSingleton<StockPhotos>();
 builder.Services.AddScoped<AssistantTools>();
 builder.Services.AddScoped<SetupAssistant>();
 

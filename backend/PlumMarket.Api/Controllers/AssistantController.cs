@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PlumMarket.Api.Data;
@@ -12,7 +13,7 @@ namespace PlumMarket.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/assistant")]
-public class AssistantController(SetupAssistant assistant, AppDbContext db, StoreContext tenant, StoreLinks links) : ControllerBase
+public class AssistantController(SetupAssistant assistant, AppDbContext db, StoreContext tenant, StoreLinks links, StockPhotos stock) : ControllerBase
 {
     public record State(bool Enabled, bool Onboarded, string StoreName, string ShopUrl,
         List<AssistantMessageDto> Messages, List<SetupStep> Progress);
@@ -123,23 +124,63 @@ public class AssistantController(SetupAssistant assistant, AppDbContext db, Stor
         var url = body.Url?.Trim();
         if (url is { Length: > 0 } && (!url.StartsWith("/uploads/", StringComparison.Ordinal) || url.Contains("..")))
             return BadRequest(new { error = "Сначала загрузите фото." });
-        if (body.Kind == "category")
-        {
-            var c = await db.Categories.FirstOrDefaultAsync(x => x.Id == body.Id);
-            if (c is null) return NotFound(new { error = "Категория не найдена." });
-            c.ImageUrl = string.IsNullOrEmpty(url) ? null : url;
-        }
-        else
-        {
-            var p = await db.Products.FirstOrDefaultAsync(x => x.Id == body.Id);
-            if (p is null) return NotFound(new { error = "Товар не найден." });
-            var main = p.Media.FirstOrDefault(m => m.Type == "image");
-            if (main is not null) p.Media.Remove(main);
-            if (!string.IsNullOrEmpty(url)) p.Media.Insert(0, new ProductMedia { Url = url, Type = "image" });
-            p.UpdatedAt = DateTime.Now;
-        }
+        if (!await SetPhotoAsync(body.Kind, body.Id, url))
+            return NotFound(new { error = body.Kind == "category" ? "Категория не найдена." : "Товар не найден." });
         await db.SaveChangesAsync();
         return Ok(new { url });
+    }
+
+    /// <summary>A product's main photo or a category's image; false when there is no such item in this store.</summary>
+    async Task<bool> SetPhotoAsync(string kind, int id, string? url)
+    {
+        if (kind == "category")
+        {
+            var c = await db.Categories.FirstOrDefaultAsync(x => x.Id == id);
+            if (c is null) return false;
+            c.ImageUrl = string.IsNullOrEmpty(url) ? null : url;
+            return true;
+        }
+        var p = await db.Products.FirstOrDefaultAsync(x => x.Id == id);
+        if (p is null) return false;
+        var main = p.Media.FirstOrDefault(m => m.Type == "image");
+        if (main is not null) p.Media.Remove(main);
+        if (!string.IsNullOrEmpty(url)) p.Media.Insert(0, new ProductMedia { Url = url, Type = "image" });
+        p.UpdatedAt = DateTime.Now;
+        return true;
+    }
+
+    public record StockPhotoBody(string Kind, int Id, long PhotoId);
+
+    /// <summary>
+    /// A photo picked in the «photos» card: copied from Pixabay into /uploads and set as the item's photo. The pick is
+    /// written back into the card, so it stays marked after a reload. Only photos that card offered are accepted.
+    /// </summary>
+    [HttpPost("stock-photo")]
+    public async Task<IActionResult> StockPhoto(StockPhotoBody body, CancellationToken ct)
+    {
+        var json = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        var offers = await db.AssistantMessages.Where(m => m.Role == "tool" && m.Card != null && m.Card.Contains("\"Kind\":\"photos\""))
+            .OrderByDescending(m => m.Id).Take(40).ToListAsync(ct);
+        foreach (var message in offers)
+        {
+            var card = JsonSerializer.Deserialize<AssistantCard>(message.Card!, json);
+            var set = card?.PhotoSets?.FirstOrDefault(s => s.Kind == body.Kind && s.Id == body.Id && s.Photos.Any(p => p.Id == body.PhotoId));
+            if (card is null || set is null) continue;
+
+            string url;
+            try { url = await stock.SaveAsync(body.PhotoId, ct); }
+            catch (Exception e) when (e is InvalidOperationException or HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                return StatusCode(502, new { error = $"Не удалось скачать фото: {e.Message}" });
+            }
+            if (!await SetPhotoAsync(body.Kind, body.Id, url))
+                return NotFound(new { error = body.Kind == "category" ? "Категория не найдена." : "Товар не найден." });
+            var sets = card.PhotoSets!.Select(s => ReferenceEquals(s, set) ? s with { ChosenId = body.PhotoId, ChosenUrl = url } : s).ToList();
+            message.Card = JsonSerializer.Serialize(card with { PhotoSets = sets }, json);
+            await db.SaveChangesAsync(ct);
+            return Ok(new { url });
+        }
+        return BadRequest(new { error = "Это фото не предлагалось — попросите помощника подобрать фото ещё раз." });
     }
 
     /// <summary>«Начать заново»: forgets the conversation; nothing in the shop is undone.</summary>
